@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function hasProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isAdmin() {
+      return hasProfile() && profile().role == 'admin' && profile().active == true;
+    }
+    function hasPermission(permission) {
+      return hasProfile() && profile().active == true && (isAdmin() || permission in profile().permissions);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'staff'
+        && request.resource.data.active == true;
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'displayName', 'department', 'jobTitle', 'phone', 'bio', 'photoURL', 'updatedAt', 'email'
+          ])
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.permissions == resource.data.permissions
+          && request.resource.data.active == resource.data.active);
+      allow delete: if isAdmin();
+    }
+
+    match /evaluations/{evaluationId} {
+      allow read: if hasPermission('view_dashboard');
+      allow create: if hasPermission('create_evaluations') || hasPermission('import_excel');
+      allow update: if hasPermission('edit_evaluations') || hasPermission('import_excel');
+      allow delete: if hasPermission('delete_evaluations');
+    }
+
+    match /workspace/{documentId} {
+      allow read: if signedIn();
+      allow write: if (documentId == 'seed' && signedIn()) || hasPermission('system_settings');
+    }
+  }
+}

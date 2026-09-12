@@ -1,0 +1,114 @@
+# Supplier Evaluation Pro — Firebase + Auth + Profiles + Permissions + AI + Dark Mode
+
+Supplier Evaluation Pro is a Next.js purchasing-office workspace built around your Supplier Evaluation workbook. Firebase Firestore is the cloud source of truth, while Excel is used for import/export and backup.
+
+## Included
+
+- Firebase Authentication: email/password and Google sign-in
+- Firebase Firestore real-time supplier evaluation database
+- 1,352 historical workbook records in `public/seed-records.json`
+- AI document scanner for supplier evaluation forms
+- AI Support workspace for summaries, rating explanations, professional remarks and workflow help
+- User profile page for every authenticated user
+- Role templates: Administrator, Purchasing Staff, Viewer
+- Per-user permissions so staff can keep useful tools such as Import/Export Excel
+- Administrator Access & Permissions screen
+- Light/dark mode
+- Emerald, Indigo, Blue, Violet and Amber accent themes
+- Excel import/export
+- Supplier history and reports
+
+## Local setup
+
+1. Run `npm install`.
+2. Copy `.env.example` to `.env.local`.
+3. Add your Firebase Web App values.
+4. Add `OPENAI_API_KEY` if you want AI OCR and AI Support.
+5. In Firebase Authentication, enable Email/Password and Google.
+6. Create Firestore Database.
+7. Paste the included `firestore.rules` into Firebase Console → Firestore → Rules and publish them.
+8. Run `npm run dev` and open `http://localhost:3000`.
+
+## Important: first Admin setup
+
+New accounts are intentionally created as `staff` so a newly registered user cannot make themselves an administrator.
+
+After your first account signs in:
+
+1. Firebase Console → Firestore Database → Data.
+2. Create/open collection `users`.
+3. Find the document whose ID is your Firebase Authentication UID.
+4. Change:
+
+```text
+role: admin
+active: true
+permissions: [all permissions]
+```
+
+The easiest option is to open the app's **Access & Permissions** page after promotion. From there you can customize each staff member individually.
+
+For an Administrator profile, the permissions should contain:
+
+```text
+view_dashboard
+scan_forms
+create_evaluations
+edit_evaluations
+delete_evaluations
+view_suppliers
+view_reports
+import_excel
+export_excel
+database_management
+user_management
+activity_logs
+ai_support
+system_settings
+```
+
+## Staff permissions
+
+Default Purchasing Staff permissions include:
+
+```text
+view_dashboard
+scan_forms
+create_evaluations
+edit_evaluations
+view_suppliers
+view_reports
+import_excel
+export_excel
+ai_support
+```
+
+That means staff can still perform normal Purchasing work and use Excel when needed, while User Management, Database Management, destructive operations, and System Settings remain restricted.
+
+## Firestore role protection
+
+The included Firestore rules use the authenticated user's `users/{uid}` profile to protect evaluation reads/writes and profile management. Users can edit only their own profile details. Administrators can manage user roles and permissions.
+
+## AI setup
+
+The scanner endpoint and AI Support endpoint use OpenAI's Responses API from server-side Next.js routes. The browser never receives `OPENAI_API_KEY`.
+
+Set:
+
+```env
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-5.6-luna
+```
+
+The model defaults to `gpt-5.6-luna`, which supports text and image input through the Responses API. Update the environment variable if you choose another compatible model.
+
+## Vercel
+
+Add the same environment variables in Vercel → Project → Settings → Environment Variables. Your Firebase Web App configuration is public client configuration; keep `OPENAI_API_KEY` secret and server-side.
+
+After deployment, add your Vercel domain to Firebase Authentication → Settings → Authorized domains so Google sign-in works on the deployed site.
+
+## Final admin/profile fix
+If an existing deployment shows “Firebase connection needs setup” on My Profile while the dashboard loads, publish the included `firestore.rules` file in Firebase Console → Firestore Database → Rules. The rules explicitly allow each signed-in user to read/create their own profile and allow administrators to manage other profiles.
+
+The latest UI uses a RouteTrack-inspired top command bar and floating Supplier AI copilot. The AI is a drawer/floating assistant rather than a required separate page.
