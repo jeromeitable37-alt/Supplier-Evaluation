@@ -66,7 +66,7 @@ html[data-theme="dark"] .ai-backdrop{background:rgba(0,0,0,.5)}html[data-theme="
 html[data-theme="dark"] .po-suggestions{box-shadow:0 18px 50px rgba(0,0,0,.38)}
 @media(max-width:700px){.po-suggestions{position:fixed;left:14px;right:14px;top:auto;max-height:240px}.po-input-wrap input{font-size:12px}.po-suggestions button{padding:11px}.po-suggestions p{white-space:normal}}
 .live-sheet-status{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:10px 12px;border:1px solid rgba(42,137,91,.22);border-radius:12px;background:rgba(42,137,91,.06)}
-.live-sheet-status>div:first-child{display:flex;align-items:center;gap:9px;min-width:0}
+.live-sheet-status-main{display:flex;align-items:center;gap:9px;min-width:0}
 .live-sheet-status b{display:block;font-size:10px;color:var(--text);line-height:1.2}
 .live-sheet-status small{display:block;margin-top:2px;color:var(--muted);font-size:8px;line-height:1.35}
 .live-sheet-status.error{border-color:rgba(214,72,72,.24);background:rgba(214,72,72,.06)}

@@ -736,6 +736,8 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState("");
   const [liveFetchedAt, setLiveFetchedAt] = useState("");
+  const [livePoCount, setLivePoCount] = useState(0);
+  const [livePrfCount, setLivePrfCount] = useState(0);
   const [lookupOpen, setLookupOpen] = useState(false);
   const [lookupQuery, setLookupQuery] = useState(value.prfNo || value.poNumber || "");
   const [lookupNotice, setLookupNotice] = useState("");
@@ -758,13 +760,19 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
       if (!response.ok || !data?.ok) {
         throw new Error(data?.message || "Live Google Sheet lookup is unavailable.");
       }
-      setPoRecords(Array.isArray(data.poRecords) ? data.poRecords : []);
-      setPrfRecords(Array.isArray(data.prfRecords) ? data.prfRecords : []);
+      const nextPoRecords = Array.isArray(data.poRecords) ? data.poRecords : [];
+      const nextPrfRecords = Array.isArray(data.prfRecords) ? data.prfRecords : [];
+      setPoRecords(nextPoRecords);
+      setPrfRecords(nextPrfRecords);
+      setLivePoCount(nextPoRecords.reduce((total: number, group: PurchaseOrderRecord) => total + (group.matches?.length || 0), 0));
+      setLivePrfCount(nextPrfRecords.length);
       setLiveFetchedAt(data.fetchedAt || new Date().toISOString());
     } catch (error) {
       setLiveError(error instanceof Error ? error.message : "Unable to load live Google Sheet data.");
       setPoRecords([]);
       setPrfRecords([]);
+      setLivePoCount(0);
+      setLivePrfCount(0);
     } finally {
       setLiveLoading(false);
     }
@@ -915,15 +923,15 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
 
             {lookupEnabled && (
               <div className={`live-sheet-status ${liveError ? "error" : ""}`}>
-                <div>
+                <div className="live-sheet-status-main">
                   <span className="live-dot" />
                   <div>
-                    <b>{liveError ? "Live Google Sheet unavailable" : "Live Google Sheet connected"}</b>
-                    <small>{liveError ? liveError : liveFetchedAt ? `Last fetched ${new Date(liveFetchedAt).toLocaleTimeString()}` : "Fetching current PO and PRF data…"}</small>
+                    <b>{liveLoading ? "Testing live Google Sheet…" : liveError ? "Live Google Sheet unavailable" : liveFetchedAt ? "Live Google Sheet connected" : "Live Google Sheet not tested yet"}</b>
+                    <small>{liveError ? liveError : liveFetchedAt ? `Last checked ${new Date(liveFetchedAt).toLocaleTimeString()} · ${livePoCount.toLocaleString()} PO matches · ${livePrfCount.toLocaleString()} PRF records` : "Click Test connection to verify the website can read the current shared sheet."}</small>
                   </div>
                 </div>
-                <button type="button" className="live-refresh-btn" onClick={() => void loadLiveSheet()} disabled={liveLoading} title="Refresh live sheet data">
-                  <RefreshCw size={13} className={liveLoading ? "spin" : ""} /> Refresh
+                <button type="button" className="live-refresh-btn" onClick={() => void loadLiveSheet()} disabled={liveLoading} title="Test and refresh live Google Sheet data">
+                  <RefreshCw size={13} className={liveLoading ? "spin" : ""} /> {liveLoading ? "Testing…" : "Test connection"}
                 </button>
               </div>
             )}
