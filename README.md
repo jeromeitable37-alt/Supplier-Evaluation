@@ -126,3 +126,6 @@ The deployed server must be able to read the Google Sheet without a user's brows
 Recommended incoming flow:
 
 `Scan/OCR -> PRF or PO -> live Google Sheet lookup -> auto-fill supplier/items/PRF/PO -> review -> save to Firebase`
+
+## Important fix: New Evaluation modal
+The New Evaluation action now opens the Evaluation Details modal correctly. The previous navigation helper cleared the editor state immediately after creating a blank evaluation, so the app only navigated to the Evaluations page. This is fixed by opening the editor before changing the page without clearing the new draft.

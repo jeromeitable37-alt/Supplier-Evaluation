@@ -396,6 +396,11 @@ export default function Home() {
 
   function notify(text: string) { setToast(text); }
   function navigate(next: Page) { setPage(next); setEditing(null); setViewing(null); }
+  function openNewEvaluation() {
+    setViewing(null);
+    setEditing(blankEvaluation());
+    setPage("evaluations");
+  }
   async function saveEvaluation(value: Evaluation) {
     if (!firebaseReady) { notify("Connect Firebase before saving an evaluation."); return; }
     try {
@@ -604,13 +609,13 @@ export default function Home() {
             <div className="user-chip"><div className="user-avatar">{userProfile?.photoURL ? <img src={userProfile.photoURL} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : String(userProfile?.displayName || authUser.displayName || authUser.email || "U").slice(0,1).toUpperCase()}</div><span>{userProfile?.displayName || authUser.email || "Signed in"}</span><button onClick={async () => { await signOutFirebase(); setRecords([]); setSettingsLoaded(false); setUserProfile(null); }}>Sign out</button></div>
             {hasPermission("import_excel") && <><button className="btn ghost" onClick={() => importRef.current?.click()}><Upload size={16} /> Import Excel</button><input ref={importRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files?.[0] && importExcel(e.target.files[0])} /></>}
             {hasPermission("export_excel") && <button className="btn secondary" onClick={() => exportExcel()}><Download size={16} /> Export</button>}
-            {hasPermission("create_evaluations") && <button className="btn primary" onClick={() => { setEditing(blankEvaluation()); navigate("evaluations"); }}><Plus size={17} /> New Evaluation</button>}
+            {hasPermission("create_evaluations") && <button className="btn primary" onClick={openNewEvaluation}><Plus size={17} /> New Evaluation</button>}
           </div>
         </header>
 
         <div className="page-content">
           {dbError && <div className="panel warning-panel firebase-warning"><AlertCircle size={18}/><div><b>Firebase connection needs setup</b><p>{dbError}</p><small>See the Firebase setup steps in the README included with this project.</small></div></div>}
-          {page === "dashboard" && <Dashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={() => { setEditing(blankEvaluation()); navigate("evaluations"); }} onView={(r) => setViewing(r)} onViewAll={() => navigate("evaluations")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
+          {page === "dashboard" && <Dashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={openNewEvaluation} onView={(r) => setViewing(r)} onViewAll={() => navigate("evaluations")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
           {page === "evaluations" && <Evaluations records={filtered} query={query} setQuery={setQuery} filterRecommendation={filterRecommendation} setFilterRecommendation={setFilterRecommendation} filterSupplier={filterSupplier} setFilterSupplier={setFilterSupplier} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} suppliers={suppliers} onEdit={setEditing} onView={setViewing} onDelete={removeEvaluation} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
           {page === "suppliers" && <Suppliers records={records} suppliers={suppliers} onViewSupplier={(supplier) => { setFilterSupplier(supplier); navigate("evaluations"); }} />}
           {page === "reports" && <Reports records={records} monthly={monthly} />}
