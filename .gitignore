@@ -1,7 +1,7 @@
-node_modules/
-.next/
+node_modules
+.next
+out
 .env
 .env.local
 .env.*.local
-.vercel/
 *.log

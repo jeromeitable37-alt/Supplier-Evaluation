@@ -108,7 +108,21 @@ Add the same environment variables in Vercel → Project → Settings → Enviro
 
 After deployment, add your Vercel domain to Firebase Authentication → Settings → Authorized domains so Google sign-in works on the deployed site.
 
-## Final admin/profile fix
-If an existing deployment shows “Firebase connection needs setup” on My Profile while the dashboard loads, publish the included `firestore.rules` file in Firebase Console → Firestore Database → Rules. The rules explicitly allow each signed-in user to read/create their own profile and allow administrators to manage other profiles.
+## Live Google Sheet lookup
 
-The latest UI uses a RouteTrack-inspired top command bar and floating Supplier AI copilot. The AI is a drawer/floating assistant rather than a required separate page.
+Incoming/new evaluations now use the live shared Supplier Evaluation Google Sheet for PO and PRF lookup. Historical imported records remain unchanged and intentionally do not use live lookup.
+
+Defaults:
+- Spreadsheet ID: `1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA`
+- PO source: `PO for Evaluation`
+- PRF source: `PRF Details v2`
+
+The server endpoint is `/api/po-lookup`. It reads the latest PO and PRF rows, merges them into lookup data, and the editor refreshes this data on open or by pressing **Refresh**.
+
+### Google Sheet access requirement
+
+The deployed server must be able to read the Google Sheet without a user's browser session. The simplest setup is to share the sheet so the data is readable by the deployed app. If your organization's sharing policy prevents direct gviz access, configure `GOOGLE_SUPPLIER_PO_CSV_URL` and `GOOGLE_SUPPLIER_PRF_CSV_URL` to point to read-only CSV/Apps Script endpoints that expose the same columns.
+
+Recommended incoming flow:
+
+`Scan/OCR -> PRF or PO -> live Google Sheet lookup -> auto-fill supplier/items/PRF/PO -> review -> save to Firebase`

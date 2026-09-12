@@ -27,10 +27,7 @@ service cloud.firestore {
         || (signedIn() && request.auth.uid == uid
           && request.resource.data.diff(resource.data).changedKeys().hasOnly([
             'displayName', 'department', 'jobTitle', 'phone', 'bio', 'photoURL', 'updatedAt', 'email'
-          ])
-          && request.resource.data.role == resource.data.role
-          && request.resource.data.permissions == resource.data.permissions
-          && request.resource.data.active == resource.data.active);
+          ]));
       allow delete: if isAdmin();
     }
 
@@ -43,7 +40,7 @@ service cloud.firestore {
 
     match /workspace/{documentId} {
       allow read: if signedIn();
-      allow write: if (documentId == 'seed' && signedIn()) || hasPermission('system_settings');
+      allow write: if documentId == 'seed' && signedIn() || hasPermission('system_settings');
     }
   }
 }

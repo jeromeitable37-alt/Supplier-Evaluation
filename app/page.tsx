@@ -99,6 +99,26 @@ type Evaluation = {
   source?: string;
 };
 
+type PurchaseOrderMatch = {
+  poNumber: string;
+  prfNumber: string;
+  itemsDelivered: string;
+  supplier: string;
+};
+
+type PurchaseOrderRecord = {
+  poNumber: string;
+  matches: PurchaseOrderMatch[];
+};
+
+type PrfRecord = {
+  prfNumber: string;
+  requisitioner: string;
+  department: string;
+  itemDescription: string;
+  purpose: string;
+};
+
 type Page = "dashboard" | "evaluations" | "suppliers" | "reports" | "data" | "settings" | "profile" | "ai" | "access";
 
 const criteria = {
@@ -145,6 +165,10 @@ const normalize = (value: unknown): Rating => {
   const n = Number(value);
   return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
 };
+
+function normalizePO(value: string) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
 
 function compute(e: Evaluation): Evaluation {
   const purchasingAvg = average(e.purchasing);
@@ -308,16 +332,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const syncSidebarForViewport = () => {
-      setSidebar(window.innerWidth > 760);
-    };
-
-    syncSidebarForViewport();
-    window.addEventListener("resize", syncSidebarForViewport);
-    return () => window.removeEventListener("resize", syncSidebarForViewport);
-  }, []);
-
-  useEffect(() => {
     if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
     if (typeof window !== "undefined") window.localStorage.setItem("supplier-theme", theme);
   }, [theme]);
@@ -381,7 +395,7 @@ export default function Home() {
   }, [rated]);
 
   function notify(text: string) { setToast(text); }
-  function navigate(next: Page) { setPage(next); setEditing(null); setViewing(null); if (typeof window !== "undefined" && window.innerWidth <= 760) setSidebar(false); }
+  function navigate(next: Page) { setPage(next); setEditing(null); setViewing(null); }
   async function saveEvaluation(value: Evaluation) {
     if (!firebaseReady) { notify("Connect Firebase before saving an evaluation."); return; }
     try {
@@ -581,7 +595,6 @@ export default function Home() {
           {sidebar && <div className="secure-card"><ShieldCheck size={16} /><div><b>Firebase cloud database</b><span>Shared supplier records are stored in Firestore and available from your deployed site.</span></div></div>}
         </div>
       </aside>
-      {sidebar && <button className="mobile-sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebar(false)} />}
 
       <main className="main-shell">
         <header className="topbar">
@@ -718,9 +731,171 @@ function CriterionBlock({ title, labels, values }: { title: string; labels: stri
 
 function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCancel: () => void; onSave: (x: Evaluation) => void }) {
   const [draft, setDraft] = useState(value);
+  const [poRecords, setPoRecords] = useState<PurchaseOrderRecord[]>([]);
+  const [prfRecords, setPrfRecords] = useState<PrfRecord[]>([]);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState("");
+  const [liveFetchedAt, setLiveFetchedAt] = useState("");
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupQuery, setLookupQuery] = useState(value.prfNo || value.poNumber || "");
+  const [lookupNotice, setLookupNotice] = useState("");
+  const lastAutoFilledKey = useRef("");
+
   useEffect(() => setDraft(value), [value]);
+  useEffect(() => {
+    setLookupQuery(value.prfNo || value.poNumber || "");
+    setLookupOpen(false);
+    setLookupNotice("");
+    lastAutoFilledKey.current = "";
+  }, [value.id]);
+
+  const loadLiveSheet = async () => {
+    setLiveLoading(true);
+    setLiveError("");
+    try {
+      const response = await fetch("/api/po-lookup", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.message || "Live Google Sheet lookup is unavailable.");
+      }
+      setPoRecords(Array.isArray(data.poRecords) ? data.poRecords : []);
+      setPrfRecords(Array.isArray(data.prfRecords) ? data.prfRecords : []);
+      setLiveFetchedAt(data.fetchedAt || new Date().toISOString());
+    } catch (error) {
+      setLiveError(error instanceof Error ? error.message : "Unable to load live Google Sheet data.");
+      setPoRecords([]);
+      setPrfRecords([]);
+    } finally {
+      setLiveLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const historicalRecord = String(value.id).startsWith("seed-") || String(value.id).startsWith("excel-") || value.source === "Imported workbook";
+    if (!historicalRecord) void loadLiveSheet();
+    // The historical-record guard intentionally keeps imported records untouched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.id]);
+
   const set = (key: keyof Evaluation, next: any) => setDraft((old) => ({ ...old, [key]: next }));
   const computed = compute(draft);
+
+  const historicalRecord = String(value.id).startsWith("seed-") || String(value.id).startsWith("excel-") || value.source === "Imported workbook";
+  const lookupEnabled = !historicalRecord;
+  const normalizedQuery = normalizePO(lookupQuery);
+
+  const poMatches = useMemo(() => {
+    if (!lookupEnabled || normalizedQuery.length < 2) return [] as PurchaseOrderMatch[];
+    const flat: PurchaseOrderMatch[] = [];
+    for (const group of poRecords) {
+      const groupKey = normalizePO(group.poNumber);
+      if (groupKey.includes(normalizedQuery) || normalizedQuery.includes(groupKey)) {
+        for (const match of group.matches || []) flat.push({ ...match, poNumber: group.poNumber });
+      }
+    }
+    const seen = new Set<string>();
+    return flat.filter((item) => {
+      const key = [normalizePO(item.poNumber), item.prfNumber, item.itemsDelivered, item.supplier].join("|");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [lookupEnabled, normalizedQuery, poRecords]);
+
+  const prfMatches = useMemo(() => {
+    if (!lookupEnabled || normalizedQuery.length < 2) return [] as PrfRecord[];
+    return prfRecords
+      .filter((record) => normalizePO(record.prfNumber).includes(normalizedQuery))
+      .slice(0, 8);
+  }, [lookupEnabled, normalizedQuery, prfRecords]);
+
+  const suggestions = useMemo(() => {
+    const po = poMatches.slice(0, 8).map((match) => ({ kind: "po" as const, match }));
+    if (prfMatches.length) return [{ kind: "prf" as const, record: prfMatches[0] }, ...po];
+    return po;
+  }, [poMatches, prfMatches]);
+
+  useEffect(() => {
+    if (!lookupEnabled || normalizedQuery.length < 2) return;
+
+    const exactPo = poRecords
+      .filter((group) => normalizePO(group.poNumber) === normalizedQuery)
+      .flatMap((group) => group.matches || []);
+    const distinctPo = exactPo.filter((match, index, arr) => {
+      const key = [match.prfNumber, match.itemsDelivered, match.supplier].join("|");
+      return arr.findIndex((x) => [x.prfNumber, x.itemsDelivered, x.supplier].join("|") === key) === index;
+    });
+
+    const exactPrf = prfRecords.find((record) => normalizePO(record.prfNumber) === normalizedQuery);
+    const autoKey = `q:${normalizedQuery}|po:${distinctPo.length}|prf:${exactPrf?.prfNumber || ""}`;
+
+    if (lastAutoFilledKey.current === autoKey) return;
+
+    if (distinctPo.length === 1) {
+      const match = distinctPo[0];
+      lastAutoFilledKey.current = autoKey;
+      setDraft((current) => ({
+        ...current,
+        poNumber: match.poNumber || current.poNumber,
+        prfNo: match.prfNumber || current.prfNo,
+        itemsDelivered: match.itemsDelivered || (exactPrf?.itemDescription ?? current.itemsDelivered),
+        supplier: match.supplier || current.supplier,
+      }));
+      setLookupNotice(`Live PO match · ${match.supplier || "Supplier not listed"}`);
+      setLookupOpen(false);
+      return;
+    }
+
+    if (distinctPo.length > 1) {
+      lastAutoFilledKey.current = autoKey;
+      setLookupNotice(`${distinctPo.length} live PO records found. Choose the correct supplier.`);
+      return;
+    }
+
+    if (exactPrf) {
+      lastAutoFilledKey.current = autoKey;
+      setDraft((current) => ({
+        ...current,
+        prfNo: exactPrf.prfNumber || current.prfNo,
+        itemsDelivered: exactPrf.itemDescription || current.itemsDelivered,
+      }));
+      setLookupNotice(`Live PRF match · ${exactPrf.department || exactPrf.requisitioner || "PRF details found"}`);
+      setLookupOpen(false);
+    }
+  }, [lookupEnabled, normalizedQuery, poRecords, prfRecords]);
+
+  function choosePO(match: PurchaseOrderMatch) {
+    lastAutoFilledKey.current = `manual:${normalizePO(match.poNumber)}:${match.prfNumber}`;
+    setDraft((current) => ({
+      ...current,
+      poNumber: match.poNumber,
+      prfNo: match.prfNumber || current.prfNo,
+      itemsDelivered: match.itemsDelivered || current.itemsDelivered,
+      supplier: match.supplier || current.supplier,
+    }));
+    setLookupQuery(match.poNumber);
+    setLookupNotice(`Live PO selected · ${match.supplier || "Supplier not listed"}`);
+    setLookupOpen(false);
+  }
+
+  function choosePrf(record: PrfRecord) {
+    lastAutoFilledKey.current = `manual-prf:${normalizePO(record.prfNumber)}`;
+    setDraft((current) => ({
+      ...current,
+      prfNo: record.prfNumber,
+      itemsDelivered: record.itemDescription || current.itemsDelivered,
+    }));
+    setLookupQuery(record.prfNumber);
+    setLookupNotice(`Live PRF selected · ${record.department || record.requisitioner || "PRF details found"}`);
+    setLookupOpen(false);
+  }
+
+  function startLookup(value: string) {
+    setLookupQuery(value);
+    setLookupNotice("");
+    lastAutoFilledKey.current = "";
+    setLookupOpen(true);
+  }
 
   return (
     <div className="modal-backdrop">
@@ -729,7 +904,7 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
           <div>
             <div className="eyebrow"><span className="eyebrow-dot" /> {draft.source === "AI scan" ? "AI SCAN REVIEW" : "NEW / EDIT EVALUATION"}</div>
             <h2>{draft.source === "AI scan" ? "Review extracted supplier form" : "Evaluation details"}</h2>
-            <p>{draft.source === "AI scan" ? "AI prepared this record. Please verify names, dates, and handwritten ratings before saving." : "The website will automatically calculate all averages and the final recommendation."}</p>
+            <p>{draft.source === "AI scan" ? "AI prepared this record. Please verify names, dates, and handwritten ratings before saving." : "The website will automatically calculate all averages and use the latest live Purchasing sheet data for incoming records."}</p>
           </div>
           <button className="icon-button" onClick={onCancel}><X size={18}/></button>
         </div>
@@ -737,11 +912,101 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
         <div className="editor-body">
           <div className="form-section">
             <div className="form-section-title"><span>01</span><div><b>Transaction details</b><small>Basic supplier and delivery information.</small></div></div>
+
+            {lookupEnabled && (
+              <div className={`live-sheet-status ${liveError ? "error" : ""}`}>
+                <div>
+                  <span className="live-dot" />
+                  <div>
+                    <b>{liveError ? "Live Google Sheet unavailable" : "Live Google Sheet connected"}</b>
+                    <small>{liveError ? liveError : liveFetchedAt ? `Last fetched ${new Date(liveFetchedAt).toLocaleTimeString()}` : "Fetching current PO and PRF data…"}</small>
+                  </div>
+                </div>
+                <button type="button" className="live-refresh-btn" onClick={() => void loadLiveSheet()} disabled={liveLoading} title="Refresh live sheet data">
+                  <RefreshCw size={13} className={liveLoading ? "spin" : ""} /> Refresh
+                </button>
+              </div>
+            )}
+
             <div className="form-grid">
               <Field label="Supplier" value={draft.supplier} onChange={(v) => set("supplier", v)} placeholder="Supplier / company name" />
               <Field label="Evaluation date" type="date" value={draft.evaluationDate} onChange={(v) => set("evaluationDate", v)} />
-              <Field label="PRF No." value={draft.prfNo} onChange={(v) => set("prfNo", v)} />
-              <Field label="PO Number" value={draft.poNumber} onChange={(v) => set("poNumber", v)} />
+
+              <div className="field po-lookup-field">
+                <span>PRF No.</span>
+                <div className="po-input-wrap">
+                  <Search size={14} className="po-search-icon" />
+                  <input
+                    value={draft.prfNo}
+                    placeholder="Scan or type PRF number"
+                    onFocus={() => lookupEnabled && setLookupOpen(true)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      set("prfNo", next);
+                      startLookup(next);
+                    }}
+                    onBlur={() => window.setTimeout(() => setLookupOpen(false), 180)}
+                  />
+                  {liveLoading && <span className="po-loading-dot" />}
+                </div>
+              </div>
+
+              <div className="field po-lookup-field">
+                <span>PO Number</span>
+                <div className="po-input-wrap">
+                  <Search size={14} className="po-search-icon" />
+                  <input
+                    value={draft.poNumber}
+                    placeholder="Type or scan PO number"
+                    onFocus={() => lookupEnabled && setLookupOpen(true)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      set("poNumber", next);
+                      startLookup(next);
+                    }}
+                    onBlur={() => window.setTimeout(() => setLookupOpen(false), 180)}
+                  />
+                  {liveLoading && <span className="po-loading-dot" />}
+                </div>
+
+                {lookupEnabled && lookupOpen && suggestions.length > 0 && (
+                  <div className="po-suggestions">
+                    {suggestions.map((item, index) => {
+                      if (item.kind === "prf") {
+                        return (
+                          <button type="button" key={`prf-${item.record.prfNumber}-${index}`} onMouseDown={(e) => e.preventDefault()} onClick={() => choosePrf(item.record)}>
+                            <div className="po-suggestion-top">
+                              <b>PRF {item.record.prfNumber}</b>
+                              <span>LIVE PRF</span>
+                            </div>
+                            <small>{item.record.department || item.record.requisitioner || "PRF details"}</small>
+                            <p>{item.record.itemDescription || "No item description listed"}</p>
+                          </button>
+                        );
+                      }
+                      return (
+                        <button
+                          type="button"
+                          key={`${normalizePO(item.match.poNumber)}-${item.match.prfNumber}-${item.match.supplier}-${item.match.itemsDelivered}-${index}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => choosePO(item.match)}
+                        >
+                          <div className="po-suggestion-top">
+                            <b>{item.match.poNumber}</b>
+                            <span>PRF {item.match.prfNumber || "—"}</span>
+                          </div>
+                          <small>{item.match.supplier || "Supplier not listed"}</small>
+                          <p>{item.match.itemsDelivered || "No items listed"}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {lookupEnabled && lookupNotice && <small className="po-lookup-notice"><CheckCircle2 size={12}/>{lookupNotice}</small>}
+                {!lookupEnabled && <small className="po-lookup-disabled">Historical record · live PO/PRF lookup is disabled to preserve the original data.</small>}
+              </div>
+
               <Field full label="Address" value={draft.address} onChange={(v) => set("address", v)} />
               <TextArea full label="Item/s Delivered" value={draft.itemsDelivered} onChange={(v) => set("itemsDelivered", v)} placeholder="Items, materials, or services delivered" />
             </div>
@@ -775,6 +1040,7 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
     </div>
   );
 }
+
 function RatingSection({ title, subtitle, labels, values, onChange }: { title: string; subtitle: string; labels: string[]; values: Rating[]; onChange: (i: number, v: Rating) => void }) { return <div className="rating-section"><div className="rating-section-head"><div><b>{title}</b><span>{subtitle} · 1 = Poor · 5 = Excellent</span></div><div className="rating-preview">{average(values) ? average(values).toFixed(2) : "—"}</div></div><div className="rating-grid">{labels.map((label, i) => <label key={label}><span>{String.fromCharCode(65 + i)} · {label}</span><select value={values[i] ?? ""} onChange={(e) => onChange(i, e.target.value ? Number(e.target.value) : null)}><option value="">Select</option>{[1,2,3,4,5].map((n) => <option value={n} key={n}>{n} — {n === 1 ? "Poor" : n === 2 ? "Fair" : n === 3 ? "Good" : n === 4 ? "Very Good" : "Excellent"}</option>)}</select></label>)}</div></div>; }
 function Field({ label, value, onChange, placeholder, type = "text", full = false }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; full?: boolean }) { return <label className={`field ${full ? "full" : ""}`}><span>{label}</span><input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} /></label>; }
 function TextArea({ label, value, onChange, placeholder, full = false }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; full?: boolean }) { return <label className={`field ${full ? "full" : ""}`}><span>{label}</span><textarea value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} /></label>; }
