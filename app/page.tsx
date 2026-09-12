@@ -308,6 +308,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const syncSidebarForViewport = () => {
+      setSidebar(window.innerWidth > 760);
+    };
+
+    syncSidebarForViewport();
+    window.addEventListener("resize", syncSidebarForViewport);
+    return () => window.removeEventListener("resize", syncSidebarForViewport);
+  }, []);
+
+  useEffect(() => {
     if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
     if (typeof window !== "undefined") window.localStorage.setItem("supplier-theme", theme);
   }, [theme]);
@@ -371,7 +381,7 @@ export default function Home() {
   }, [rated]);
 
   function notify(text: string) { setToast(text); }
-  function navigate(next: Page) { setPage(next); setEditing(null); setViewing(null); }
+  function navigate(next: Page) { setPage(next); setEditing(null); setViewing(null); if (typeof window !== "undefined" && window.innerWidth <= 760) setSidebar(false); }
   async function saveEvaluation(value: Evaluation) {
     if (!firebaseReady) { notify("Connect Firebase before saving an evaluation."); return; }
     try {
@@ -571,6 +581,7 @@ export default function Home() {
           {sidebar && <div className="secure-card"><ShieldCheck size={16} /><div><b>Firebase cloud database</b><span>Shared supplier records are stored in Firestore and available from your deployed site.</span></div></div>}
         </div>
       </aside>
+      {sidebar && <button className="mobile-sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebar(false)} />}
 
       <main className="main-shell">
         <header className="topbar">
