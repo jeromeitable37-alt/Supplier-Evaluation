@@ -13,6 +13,8 @@ import {
 import { auth, db } from "./firebase";
 
 export const EVALUATIONS = "evaluations";
+export const PURCHASE_ORDERS = "purchaseOrders";
+export const EVALUATION_LINKS = "evaluationLinks";
 const SETTINGS = "workspace";
 export const USERS = "users";
 
@@ -342,4 +344,156 @@ export async function updateManagedUser(profile: UserProfile) {
     active: profile.active !== false,
     updatedAt: new Date().toISOString(),
   }, { merge: true });
+}
+
+
+export type PurchaseOrderLine = {
+  line: number;
+  description: string;
+  unit: string;
+  qty: number | string;
+  unitPrice: number | string;
+  itemDiscountPct: number | string;
+  lineTotal: number | string;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  poNumber: string;
+  prfNumber: string;
+  requisitioner: string;
+  department: string;
+  purpose: string;
+  vendorName: string;
+  vendorAttention: string;
+  vendorPhone: string;
+  vendorEmail: string;
+  vendorAddress: string;
+  vendorCity: string;
+  deliveryAddress: string;
+  orderDate: string;
+  expectedDate: string;
+  paymentTerms: string;
+  notes: string;
+  subtotal: number;
+  discountPct: number;
+  discountAmt: number;
+  total: number;
+  buyerName: string;
+  buyerEmail: string;
+  approverName: string;
+  status: string;
+  actualDeliveryDate: string;
+  receivedBy: string;
+  createdAt: string;
+  source: string;
+  items: PurchaseOrderLine[];
+};
+
+export type PublicEvaluationLink = {
+  token: string;
+  status: "pending" | "submitted";
+  po: PurchaseOrder;
+  workspaceName: string;
+  requisitionerName: string;
+  requisitionerEmail: string;
+  createdAt: string;
+  submittedAt?: string;
+};
+
+export function subscribePurchaseOrders(callback: (items: PurchaseOrder[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  const firestore = requireDb();
+  return onSnapshot(
+    query(collection(firestore, PURCHASE_ORDERS)),
+    (snapshot) => callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as PurchaseOrder[]),
+    (error) => onError?.(error),
+  );
+}
+
+export async function savePurchaseOrderCloud(item: PurchaseOrder) {
+  const firestore = requireDb();
+  await signInToFirebase();
+  await setDoc(doc(firestore, PURCHASE_ORDERS, String(item.id)), item, { merge: true });
+}
+
+export async function createEvaluationLinkCloud(input: {
+  po: PurchaseOrder;
+  requisitionerEmail?: string;
+  createdBy?: string;
+  workspaceName?: string;
+}) {
+  const firestore = requireDb();
+  await signInToFirebase();
+  const token = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`.replace(/[^a-z0-9]/gi, "").slice(0, 32);
+  const workspaceName = input.workspaceName || "Southville International School and Colleges";
+  const link: PublicEvaluationLink = {
+    token,
+    status: "pending",
+    po: input.po,
+    workspaceName,
+    requisitionerName: input.po.requisitioner || "Requisitioner",
+    requisitionerEmail: input.requisitionerEmail || "",
+    createdAt: new Date().toISOString(),
+  };
+  await setDoc(doc(firestore, EVALUATION_LINKS, token), {
+    ...link,
+    createdBy: input.createdBy || "",
+    evaluationId: `public-${token}`,
+  });
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return { token, url: `${origin}/evaluate/${token}`, record: link };
+}
+
+export async function getPublicEvaluationLink(token: string): Promise<PublicEvaluationLink | null> {
+  const firestore = requireDb();
+  const snap = await getDoc(doc(firestore, EVALUATION_LINKS, token));
+  if (!snap.exists()) return null;
+  const data = snap.data() as PublicEvaluationLink;
+  return { ...data, token };
+}
+
+export async function createPublicRequisitionerEvaluation(input: {
+  token: string;
+  link: PublicEvaluationLink;
+  scores: Record<string, number>;
+  comments: string;
+  overall: number;
+}) {
+  const firestore = requireDb();
+  const evaluationId = `public-${input.token}`;
+  const submittedAt = new Date().toISOString();
+  const requisitioner = [
+    input.scores.accurate_delivery || null,
+    input.scores.competitive_price || null,
+    input.scores.timeliness || null,
+    input.scores.after_sales || null,
+  ];
+  const row: Record<string, unknown> = {
+    id: evaluationId,
+    prfNo: input.link.po.prfNumber || "",
+    poNumber: input.link.po.poNumber || "",
+    itemsDelivered: input.link.po.items.map((item) => `${item.qty || ""} ${item.unit || ""} ${item.description || ""}`.trim()).filter(Boolean).join("; "),
+    evaluationDate: submittedAt.slice(0, 10),
+    supplier: input.link.po.vendorName || "",
+    address: input.link.po.deliveryAddress || "",
+    remarks: input.comments || "",
+    purchasing: [null, null, null, null, null],
+    requisitioner,
+    amd: [null, null, null, null],
+    purchasingAvg: 0,
+    requisitionerAvg: input.overall,
+    amdAvg: 0,
+    finalRating: input.overall,
+    recommendation: input.overall >= 4.5 ? "Strongly Recommended" : input.overall >= 4 ? "Recommended" : input.overall >= 3.5 ? "Acceptable" : input.overall >= 3 ? "Acceptable w/ some Reservation" : "Not Recommended",
+    createdAt: submittedAt,
+    source: "Requisitioner web evaluation",
+    publicToken: input.token,
+    evaluatorRole: "requisitioner",
+    evaluatorEmail: input.link.requisitionerEmail || "",
+    submittedAt,
+    evaluationLinkId: input.token,
+  };
+  await setDoc(doc(firestore, EVALUATIONS, evaluationId), row, { merge: false });
+  await setDoc(doc(firestore, EVALUATION_LINKS, input.token), { status: "submitted", submittedAt, evaluationId }, { merge: true });
+  return { ok: true, evaluationId, submittedAt };
 }

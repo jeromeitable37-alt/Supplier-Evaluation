@@ -33,8 +33,35 @@ service cloud.firestore {
 
     match /evaluations/{evaluationId} {
       allow read: if hasPermission('view_dashboard');
-      allow create: if hasPermission('create_evaluations') || hasPermission('import_excel');
+      allow create: if hasPermission('create_evaluations') || hasPermission('import_excel')
+        || (
+          request.resource.data.publicToken is string
+          && request.resource.data.evaluatorRole == 'requisitioner'
+          && request.resource.data.poNumber == get(/databases/$(database)/documents/evaluationLinks/$(request.resource.data.publicToken)).data.po.poNumber
+          && get(/databases/$(database)/documents/evaluationLinks/$(request.resource.data.publicToken)).data.status == 'pending'
+        );
       allow update: if hasPermission('edit_evaluations') || hasPermission('import_excel');
+      allow delete: if hasPermission('delete_evaluations');
+    }
+
+    match /purchaseOrders/{purchaseOrderId} {
+      allow read: if hasPermission('view_dashboard') || hasPermission('create_evaluations');
+      allow create, update: if hasPermission('create_evaluations') || hasPermission('edit_evaluations');
+      allow delete: if hasPermission('delete_evaluations');
+    }
+
+    match /evaluationLinks/{token} {
+      allow get: if resource.data.token == token;
+      allow list: if hasPermission('view_dashboard');
+      allow create: if hasPermission('create_evaluations')
+        && request.resource.data.token == token
+        && request.resource.data.status == 'pending';
+      allow update: if (
+        resource.data.token == token
+        && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'submittedAt', 'evaluationId'])
+        && request.resource.data.status == 'submitted'
+      ) || hasPermission('edit_evaluations');
       allow delete: if hasPermission('delete_evaluations');
     }
 

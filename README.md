@@ -129,3 +129,29 @@ Recommended incoming flow:
 
 ## Important fix: New Evaluation modal
 The New Evaluation action now opens the Evaluation Details modal correctly. The previous navigation helper cleared the editor state immediately after creating a blank evaluation, so the app only navigated to the Evaluations page. This is fixed by opening the editor before changing the page without clearing the new draft.
+
+## Generated Purchase Order workflow
+
+The existing Supplier Evaluation Pro pages remain in place. A new **PO Generator** page was added alongside the existing Scan & Extract/manual evaluation workflow.
+
+### What was added
+
+- **Live Google Sheet PO generation:** the PO Generator reads `PO for Evaluation` and `PRF Details v2` through `/api/po-lookup` and maps the detailed supplier, requisitioner, delivery, terms, item, quantity, price, discount, and total fields when those columns are available.
+- **Paper-PO-style document:** generated POs follow the same one-page structure used by the supplied reference PO: company header, PO number, vendor block, date/delivery/terms, line-item table, PRF/requisitioner/purpose, totals, amount in words, and signature/conforme areas.
+- **No scan required for new POs:** scanning/OCR is preserved, but it is no longer required when the needed details already exist in the live spreadsheet.
+- **Firebase purchase order storage:** generated POs are saved in `purchaseOrders` and remain separate from the historical `evaluations` collection.
+- **Requisitioner evaluation link:** every generated PO can create a unique `/evaluate/<token>` URL. The requisitioner rates the same four criteria used by the supplied Apps Script: Accurate Delivery / Quality, Competitive Price, Timeliness of Delivery, and After Sales Services. The submitted result is written back into the existing evaluation register as `source: Requisitioner web evaluation`.
+- **One submission per link:** the evaluation link is marked submitted after the evaluation is stored.
+- **Automatic evaluation request email:** when Resend is configured, the system sends the request automatically. Without Resend credentials, the system falls back to opening a pre-filled email message in the user's mail app.
+- **Academic Year summary:** Reports & Ratings now includes five July-to-June Academic Years, including **AY 2025–2026**, with evaluation count and average Final / Requisitioner / Purchasing / AMD ratings.
+- **Automatic Google Sheet refresh:** the PO Generator refreshes the live PO/PRF source when opened and every 60 seconds while it remains open.
+
+### Supplier-evaluation reference behavior
+
+The supplied Apps Script uses the July 1–June 30 academic-year definition and averages submitted evaluation criteria by vendor and Academic Year. fileciteturn14file2L826-L910 The supplied evaluator form uses four requisitioner/AMD criteria and adds Compliance only for the purchaser. fileciteturn14file1L391-L451
+
+### Vercel setup
+
+Create `.env.local` locally or add the same variables in Vercel Project Settings → Environment Variables. `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are optional; Firebase and the Google Sheet source are the important values for the generated-PO workflow.
+
+After deploying the updated `firestore.rules`, the public evaluator can read one tokenized `evaluationLinks` document and submit one matching public evaluation record. Existing authenticated evaluation permissions are unchanged.

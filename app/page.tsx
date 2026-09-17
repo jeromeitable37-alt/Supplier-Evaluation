@@ -33,6 +33,7 @@ import {
   DEFAULT_VIEWER_PERMISSIONS,
   PERMISSIONS,
 } from "../lib/firestore";
+import PurchaseOrderGenerator from "../components/PurchaseOrderGenerator";
 import {
   Activity,
   ChevronDown,
@@ -56,6 +57,7 @@ import {
   Edit3,
   FileSpreadsheet,
   Filter,
+  FileText,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -119,7 +121,7 @@ type PrfRecord = {
   purpose: string;
 };
 
-type Page = "dashboard" | "evaluations" | "suppliers" | "reports" | "data" | "settings" | "profile" | "ai" | "access";
+type Page = "dashboard" | "evaluations" | "suppliers" | "reports" | "purchase-orders" | "data" | "settings" | "profile" | "ai" | "access";
 
 const criteria = {
   purchasing: [
@@ -568,7 +570,7 @@ export default function Home() {
       setAiBusy(false);
     }
   }
-  const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
+  const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "purchase-orders" ? "PO Generator" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
 
   if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark"><ClipboardCheck size={22}/></div><h1>Loading Supplier Evaluation Pro</h1><p>Checking your secure Firebase session…</p></div></div>;
   if (!authUser) return <AuthScreen onSuccess={() => {}} />;
@@ -588,6 +590,7 @@ export default function Home() {
           <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={page === "dashboard"} onClick={() => navigate("dashboard")} compact={!sidebar} />
           {hasPermission("scan_forms") && <NavItem icon={<ScanLine size={18} />} label="Scan & Extract" active={false} onClick={() => setScanOpen(true)} compact={!sidebar} accent />}
           <NavItem icon={<ClipboardList size={18} />} label="Evaluations" active={page === "evaluations"} onClick={() => navigate("evaluations")} compact={!sidebar} />
+          <NavItem icon={<FileText size={18} />} label="PO Generator" active={page === "purchase-orders"} onClick={() => navigate("purchase-orders")} compact={!sidebar} />
           <NavItem icon={<Building2 size={18} />} label="Suppliers" active={page === "suppliers"} onClick={() => navigate("suppliers")} compact={!sidebar} />
           <NavItem icon={<BarChart3 size={18} />} label="Reports & Ratings" active={page === "reports"} onClick={() => navigate("reports")} compact={!sidebar} />
           <NavItem icon={<Bot size={18} />} label="AI Support" active={aiOpen || page === "ai"} onClick={() => setAiOpen(true)} compact={!sidebar} />
@@ -610,6 +613,7 @@ export default function Home() {
             {hasPermission("import_excel") && <><button className="btn ghost" onClick={() => importRef.current?.click()}><Upload size={16} /> Import Excel</button><input ref={importRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files?.[0] && importExcel(e.target.files[0])} /></>}
             {hasPermission("export_excel") && <button className="btn secondary" onClick={() => exportExcel()}><Download size={16} /> Export</button>}
             {hasPermission("create_evaluations") && <button className="btn primary" onClick={openNewEvaluation}><Plus size={17} /> New Evaluation</button>}
+            {hasPermission("create_evaluations") && <button className="btn secondary" onClick={() => navigate("purchase-orders")}><FileText size={16} /> PO Generator</button>}
           </div>
         </header>
 
@@ -617,6 +621,7 @@ export default function Home() {
           {dbError && <div className="panel warning-panel firebase-warning"><AlertCircle size={18}/><div><b>Firebase connection needs setup</b><p>{dbError}</p><small>See the Firebase setup steps in the README included with this project.</small></div></div>}
           {page === "dashboard" && <Dashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={openNewEvaluation} onView={(r) => setViewing(r)} onViewAll={() => navigate("evaluations")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
           {page === "evaluations" && <Evaluations records={filtered} query={query} setQuery={setQuery} filterRecommendation={filterRecommendation} setFilterRecommendation={setFilterRecommendation} filterSupplier={filterSupplier} setFilterSupplier={setFilterSupplier} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} suppliers={suppliers} onEdit={setEditing} onView={setViewing} onDelete={removeEvaluation} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
+          {page === "purchase-orders" && <PurchaseOrderGenerator workspaceName="Southville International School and Colleges" workspaceAddress={(settings as any).address || ""} workspaceEmail={(settings as any).email || ""} currentUser={authUser ? { uid: authUser.uid, email: authUser.email || "", displayName: userProfile?.displayName || authUser.displayName || "" } : null} canEdit={hasPermission("create_evaluations")} onNotify={notify} />}
           {page === "suppliers" && <Suppliers records={records} suppliers={suppliers} onViewSupplier={(supplier) => { setFilterSupplier(supplier); navigate("evaluations"); }} />}
           {page === "reports" && <Reports records={records} monthly={monthly} />}
           {page === "data" && (hasPermission("database_management") ? <DataCenter records={records} onImport={() => importRef.current?.click()} onExport={() => exportExcel()} onClear={clearAll} onRefresh={() => location.reload()} /> : <AccessDenied title="Data Center restricted" text="Your account does not have database management permission." />)}
@@ -1066,7 +1071,42 @@ function Suppliers({ records, suppliers, onViewSupplier }: { records: Evaluation
 function Reports({ records, monthly }: { records: Evaluation[]; monthly: any[] }) {
   const counts = ["Strongly Recommended", "Recommended", "Acceptable", "Acceptable w/ some Reservation", "Not Recommended"].map((name) => ({ name, count: records.filter((r) => r.recommendation === name).length }));
   const top = Array.from(new Set(records.map((r) => r.supplier).filter(Boolean))).map((supplier) => { const rs = records.filter((r) => r.supplier === supplier && r.finalRating); return { supplier, avg: average(rs.map((r) => r.finalRating)), count: rs.length }; }).filter((x) => x.count).sort((a,b) => b.avg - a.avg).slice(0, 10);
-  return <div><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> PERFORMANCE ANALYTICS</div><h1>Reports & Ratings</h1><p>Management-ready views built directly from your evaluation records.</p></div></div><div className="report-grid"><div className="panel"><div className="panel-head"><div><div className="section-kicker">RECOMMENDATIONS</div><h2>Recommendation distribution</h2><p>{records.length.toLocaleString()} total records</p></div></div><div className="report-bars">{counts.map((x) => <div className="report-bar" key={x.name}><div><span>{x.name}</span><b>{x.count}</b></div><div className="track"><i style={{ width: `${records.length ? (x.count / records.length) * 100 : 0}%` }} /></div></div>)}</div></div><div className="panel"><div className="panel-head"><div><div className="section-kicker">RANKING</div><h2>Top suppliers</h2><p>Highest final rating averages</p></div></div>{top.map((x, i) => <div className="rank-row" key={x.supplier}><span>{i + 1}</span><div><b>{x.supplier}</b><small>{x.count} evaluation{x.count === 1 ? "" : "s"}</small></div><strong>{x.avg.toFixed(2)}</strong></div>)}{!top.length && <Empty text="No rated suppliers" sub="Your supplier rankings will appear here."/>}</div></div><div className="content-grid"><div className="panel"><div className="panel-head"><div><div className="section-kicker">TREND</div><h2>Rating trend</h2><p>Recent monthly averages.</p></div></div><div className="trend-list">{monthly.map((m) => <div key={m.month}><span>{m.month}</span><div className="trend-track"><i style={{ width: `${(m.avg / 5) * 100}%` }} /></div><b>{m.avg.toFixed(2)}</b></div>)}{!monthly.length && <Empty text="No monthly ratings" sub="Rated evaluations are needed for this report."/>}</div></div><div className="panel rubric"><div className="panel-head"><div><div className="section-kicker">RUBRIC</div><h2>Your recommendation rules</h2><p>Matches the rubric from your existing workbook.</p></div></div><Rule min="4.50" label="Strongly Recommended"/><Rule min="4.00" label="Recommended"/><Rule min="3.50" label="Acceptable"/><Rule min="3.00" label="Acceptable w/ some Reservation"/><Rule min="0.00" label="Not Recommended"/></div></div></div>;
+  const ayRows = useMemo(() => {
+    const now = new Date();
+    const currentStartYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+    return Array.from({ length: 5 }, (_, index) => currentStartYear - index).map((startYear) => {
+      const label = `AY ${startYear}\u2013${startYear + 1}`;
+      const within = records.filter((record) => {
+        const raw = record.evaluationDate || record.createdAt;
+        if (!raw || record.finalRating <= 0) return false;
+        const date = new Date(raw);
+        if (Number.isNaN(date.getTime())) return false;
+        return date >= new Date(startYear, 6, 1) && date <= new Date(startYear + 1, 5, 30, 23, 59, 59);
+      });
+      const groupAverage = (values: number[]) => average(values.filter((value) => value > 0));
+      return {
+        label,
+        count: within.length,
+        final: groupAverage(within.map((r) => r.finalRating)),
+        requisitioner: groupAverage(within.map((r) => r.requisitionerAvg)),
+        purchasing: groupAverage(within.map((r) => r.purchasingAvg)),
+        amd: groupAverage(within.map((r) => r.amdAvg)),
+      };
+    });
+  }, [records]);
+
+  return <div>
+    <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> PERFORMANCE ANALYTICS</div><h1>Reports & Ratings</h1><p>Management-ready views built directly from your evaluation records.</p></div></div>
+    <div className="report-grid">
+      <div className="panel"><div className="panel-head"><div><div className="section-kicker">RECOMMENDATIONS</div><h2>Recommendation distribution</h2><p>{records.length.toLocaleString()} total records</p></div></div><div className="report-bars">{counts.map((x) => <div className="report-bar" key={x.name}><div><span>{x.name}</span><b>{x.count}</b></div><div className="track"><i style={{ width: `${records.length ? (x.count / records.length) * 100 : 0}%` }} /></div></div>)}</div></div>
+      <div className="panel"><div className="panel-head"><div><div className="section-kicker">RANKING</div><h2>Top suppliers</h2><p>Highest final rating averages</p></div></div>{top.map((x, i) => <div className="rank-row" key={x.supplier}><span>{i + 1}</span><div><b>{x.supplier}</b><small>{x.count} evaluation{x.count === 1 ? "" : "s"}</small></div><strong>{x.avg.toFixed(2)}</strong></div>)}{!top.length && <Empty text="No rated suppliers" sub="Your supplier rankings will appear here."/>}</div>
+    </div>
+    <div className="content-grid">
+      <div className="panel"><div className="panel-head"><div><div className="section-kicker">TREND</div><h2>Rating trend</h2><p>Recent monthly averages.</p></div></div><div className="trend-list">{monthly.map((m) => <div key={m.month}><span>{m.month}</span><div className="trend-track"><i style={{ width: `${(m.avg / 5) * 100}%` }} /></div><b>{m.avg.toFixed(2)}</b></div>)}{!monthly.length && <Empty text="No monthly ratings" sub="Rated evaluations are needed for this report."/>}</div></div>
+      <div className="panel rubric"><div className="panel-head"><div><div className="section-kicker">RUBRIC</div><h2>Your recommendation rules</h2><p>Matches the rubric from your existing workbook.</p></div></div><Rule min="4.50" label="Strongly Recommended"/><Rule min="4.00" label="Recommended"/><Rule min="3.50" label="Acceptable"/><Rule min="3.00" label="Acceptable w/ some Reservation"/><Rule min="0.00" label="Not Recommended"/></div>
+    </div>
+    <div className="panel annual-summary-panel"><div className="panel-head"><div><div className="section-kicker">ACADEMIC YEAR SUMMARY</div><h2>Evaluation averages by academic year</h2><p>July 1 through June 30, matching the supplier-evaluation logic supplied for this system.</p></div><CalendarDays size={18} className="muted-icon"/></div><div className="table-wrap"><table><thead><tr><th>Academic Year</th><th>Evaluations</th><th>Final Avg.</th><th>Requisitioner Avg.</th><th>Purchasing Avg.</th><th>AMD Avg.</th></tr></thead><tbody>{ayRows.map((row) => <tr key={row.label}><td><b>{row.label}</b></td><td>{row.count}</td><td>{row.final ? row.final.toFixed(2) : "—"}</td><td>{row.requisitioner ? row.requisitioner.toFixed(2) : "—"}</td><td>{row.purchasing ? row.purchasing.toFixed(2) : "—"}</td><td>{row.amd ? row.amd.toFixed(2) : "—"}</td></tr>)}</tbody></table></div></div>
+  </div>;
 }
 function Rule({ min, label }: { min: string; label: string }) { return <div className="rule"><span>{min}+</span><b>{label}</b></div>; }
 
