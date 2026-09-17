@@ -12,6 +12,7 @@ import {
   type User,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -39,6 +40,7 @@ if (typeof window !== "undefined" && firebaseConfigured()) {
 
 export const auth = app ? getAuth(app) : null;
 export const db = app ? getFirestore(app) : null;
+export const storage = app ? getStorage(app) : null;
 
 export async function signInWithEmail(email: string, password: string) {
   if (!auth) throw new Error("Firebase is not configured yet.");

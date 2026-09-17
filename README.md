@@ -155,3 +155,42 @@ The supplied Apps Script uses the July 1–June 30 academic-year definition and 
 Create `.env.local` locally or add the same variables in Vercel Project Settings → Environment Variables. `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are optional; Firebase and the Google Sheet source are the important values for the generated-PO workflow.
 
 After deploying the updated `firestore.rules`, the public evaluator can read one tokenized `evaluationLinks` document and submit one matching public evaluation record. Existing authenticated evaluation permissions are unchanged.
+
+## Official PO document storage + requisitioner evaluation
+
+PO Generator now supports the official-document workflow used by the purchasing office:
+
+1. Search the Google Sheet PO/PRF record.
+2. Open the PO from **For Supplier Evaluation**.
+3. Upload or scan the official PO as PDF/JPG/PNG.
+4. The file is stored in Firebase Storage and its metadata is saved with the purchase-order record in Firestore.
+5. When **Send PO + evaluation** is used, the same stored PO document is attached to the Resend email and shown on the public requisitioner evaluation page.
+6. After submission, that PO is removed automatically from the **For Supplier Evaluation** queue and remains in evaluation history/reports.
+
+### Firebase rules
+
+Deploy both Firestore and Storage rules from the project directory:
+
+```bash
+firebase deploy --only firestore:rules,storage
+```
+
+### Resend
+
+Set these Vercel environment variables:
+
+```env
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
+```
+
+Resend supports remote URL attachments, which the system uses for the stored PO document.
+
+### Optional Gemini document extraction
+
+For future/optional scan-to-fields assistance, set:
+
+```env
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.8-flash
+```

@@ -10,7 +10,8 @@ import {
   writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
-import { auth, db } from "./firebase";
+import { auth, db, storage } from "./firebase";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 export const EVALUATIONS = "evaluations";
 export const PURCHASE_ORDERS = "purchaseOrders";
@@ -388,6 +389,14 @@ export type PurchaseOrder = {
   createdAt: string;
   source: string;
   items: PurchaseOrderLine[];
+  documentUrl?: string;
+  documentPath?: string;
+  documentName?: string;
+  documentMimeType?: string;
+  documentSize?: number;
+  documentUploadedAt?: string;
+  documentUploadedBy?: string;
+  documentSource?: string;
 };
 
 export type PublicEvaluationLink = {
@@ -414,6 +423,67 @@ export async function savePurchaseOrderCloud(item: PurchaseOrder) {
   const firestore = requireDb();
   await signInToFirebase();
   await setDoc(doc(firestore, PURCHASE_ORDERS, String(item.id)), item, { merge: true });
+}
+
+export async function getPurchaseOrderCloud(id: string): Promise<PurchaseOrder | null> {
+  const firestore = requireDb();
+  await signInToFirebase();
+  const snap = await getDoc(doc(firestore, PURCHASE_ORDERS, String(id)));
+  return snap.exists() ? ({ id: snap.id, ...snap.data() } as PurchaseOrder) : null;
+}
+
+export async function uploadPurchaseOrderDocumentCloud(input: {
+  po: PurchaseOrder;
+  file: File;
+  uploadedBy?: string;
+}) {
+  const firestore = requireDb();
+  if (!storage) throw new Error("Firebase Storage is not configured. Check NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET.");
+  await signInToFirebase();
+  if (!input.file) throw new Error("Please choose a PO document first.");
+  if (input.file.size > 12 * 1024 * 1024) throw new Error("PO document is too large. Maximum size is 12 MB.");
+  const safeName = input.file.name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(-120) || "official-po";
+  const folder = String(input.po.poNumber || input.po.id || "unknown").replace(/[^a-zA-Z0-9._-]+/g, "_");
+  const path = `purchase-orders/${folder}/${Date.now()}-${safeName}`;
+  const fileRef = ref(storage, path);
+  await uploadBytes(fileRef, input.file, { contentType: input.file.type || undefined });
+  const url = await getDownloadURL(fileRef);
+  const metadata = {
+    documentUrl: url,
+    documentPath: path,
+    documentName: input.file.name,
+    documentMimeType: input.file.type || "application/octet-stream",
+    documentSize: input.file.size,
+    documentUploadedAt: new Date().toISOString(),
+    documentUploadedBy: input.uploadedBy || auth?.currentUser?.email || "",
+    documentSource: "uploaded-official-po",
+  };
+  await setDoc(doc(firestore, PURCHASE_ORDERS, String(input.po.id)), metadata, { merge: true });
+  return metadata;
+}
+
+export function subscribePurchaseOrderEvaluations(callback: (items: Record<string, unknown>[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  const firestore = requireDb();
+  return onSnapshot(
+    query(collection(firestore, EVALUATIONS)),
+    (snapshot) => callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as Record<string, unknown>[]),
+    (error) => onError?.(error),
+  );
+}
+
+export function subscribeEvaluationLinks(callback: (items: PublicEvaluationLink[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  const firestore = requireDb();
+  return onSnapshot(
+    query(collection(firestore, EVALUATION_LINKS)),
+    (snapshot) => callback(snapshot.docs.map((item) => ({ token: item.id, ...item.data() })) as PublicEvaluationLink[]),
+    (error) => onError?.(error),
+  );
+}
+
+export async function updateEvaluationLinkPOCloud(token: string, po: PurchaseOrder) {
+  const firestore = requireDb();
+  await signInToFirebase();
+  await setDoc(doc(firestore, EVALUATION_LINKS, token), { po }, { merge: true });
 }
 
 export async function createEvaluationLinkCloud(input: {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardCheck, Loader2, Star, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
 import { buildPurchaseOrderHtml } from "../../../components/PurchaseOrderGenerator";
 
@@ -10,8 +10,12 @@ const criteria = [
   ["accurate_delivery", "Accurate Delivery / Quality", "Were the items delivered accurately and did they meet the expected quality or specifications?"],
   ["competitive_price", "Competitive Price", "Was the supplier's price reasonable and competitive based on the requested purchase?"],
   ["timeliness", "Timeliness of Delivery", "Was the delivery completed within the agreed delivery period?"],
-  ["after_sales", "After Sales Services", "Did the supplier provide adequate support after delivery?"],
+  ["after_sales", "After Sales Services", "Did the supplier provide adequate support after delivery?"] ,
 ] as const;
+
+function isImage(mime?: string) {
+  return Boolean(mime && mime.startsWith("image/"));
+}
 
 export default function EvaluationPage() {
   const token = typeof window !== "undefined" ? window.location.pathname.split("/").filter(Boolean).pop() || "" : "";
@@ -68,9 +72,20 @@ export default function EvaluationPage() {
   if (error || !link) return <div className="public-eval-shell"><div className="public-eval-card center"><XCircle size={46}/><h1>Evaluation unavailable</h1><p>{error || "This evaluation link is not available."}</p></div></div>;
 
   const po = link.po;
-  return <div className="public-eval-shell"><div className="public-eval-wrap"><section className="public-eval-header"><div className="public-eval-logo"><ClipboardCheck size={21}/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
+  const officialDocument = po.documentUrl || "";
+  return <div className="public-eval-shell"><div className="public-eval-wrap">
+    <section className="public-eval-header"><div className="public-eval-logo"><ClipboardCheck size={21}/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
     <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
-    <section className="public-po-paper"><div className="public-po-paper-head"><b>Generated Purchase Order</b><span>Full reference layout</span></div><iframe title="Generated Purchase Order" className="public-po-frame" srcDoc={buildPurchaseOrderHtml(po, { name: link.workspaceName || "Southville International School and Colleges" })} /><div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div></section>
+
+    <section className="public-po-paper">
+      <div className="public-po-paper-head"><b>{officialDocument ? "Official Purchase Order" : "Generated Purchase Order"}</b><span>{officialDocument ? "Stored transaction document" : "System template preview"}</span></div>
+      {officialDocument ? <>
+        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The same official PO stored by the purchasing office is shown here for your evaluation.</small></div><a href={officialDocument} target="_blank" rel="noreferrer">Open / Download</a></div>
+        {isImage(po.documentMimeType) ? <img src={officialDocument} alt={`Official purchase order ${po.poNumber}`} className="public-official-image"/> : <iframe title={`Official purchase order ${po.poNumber}`} className="public-po-frame" src={officialDocument}/>} 
+      </> : <iframe title="Generated Purchase Order" className="public-po-frame" srcDoc={buildPurchaseOrderHtml(po, { name: link.workspaceName || "Southville International School and Colleges" })} />}
+      <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+    </section>
+
     {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {po.requisitioner || link.requisitionerName || "Requisitioner"}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p></section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span>PLEASE RATE THE DELIVERED PURCHASE</span></div><h2>Supplier evaluation</h2><p>Please rate each criterion from 1 (Poor) to 5 (Excellent). Your responses are saved with this purchase transaction.</p></section><section className="public-eval-criteria">{criteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}</div>)}</section><section className="public-comments"><label>Additional comments <span>(optional)</span><textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Please add any comments about the delivery, quality, or supplier service."/></label><div className="public-submit-row"><div><span>Current average</span><strong>{overall ? overall.toFixed(1) : "—"} / 5</strong></div><button className="btn primary" disabled={submitting} onClick={() => void submit()}>{submitting ? "Submitting…" : "Submit Evaluation"}</button></div>{submitError && <div className="public-eval-error">{submitError}</div>}</section></>}
     <footer className="public-eval-footer">This evaluation link is unique to the intended requisitioner. One completed submission is allowed for this transaction.</footer>
   </div></div>;
