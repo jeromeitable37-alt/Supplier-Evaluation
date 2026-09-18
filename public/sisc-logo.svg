@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="crest"><path d="M68 35 Q256 96 444 35 L439 290 Q428 403 256 490 Q84 403 73 290 Z"/></clipPath>
+  </defs>
+  <path d="M68 35 Q256 96 444 35 L439 290 Q428 403 256 490 Q84 403 73 290 Z" fill="#fff" stroke="#121212" stroke-width="7"/>
+  <g clip-path="url(#crest)">
+    <rect width="512" height="170" fill="#56257c"/>
+    <rect y="170" width="512" height="342" fill="#fff"/>
+    <g fill="#fff" font-family="Arial,Helvetica,sans-serif" font-weight="800" text-anchor="middle">
+      <text x="256" y="76" font-size="27">SOUTHVILLE</text>
+      <text x="256" y="110" font-size="20">INTERNATIONAL SCHOOL</text>
+      <text x="256" y="139" font-size="20">AND COLLEGES</text>
+    </g>
+    <g stroke="#13985f" fill="none" stroke-width="7" stroke-linecap="round">
+      <path d="M104 401 Q49 310 96 210"/>
+      <path d="M408 401 Q463 310 416 210"/>
+    </g>
+    <g fill="#13985f">
+      <ellipse cx="92" cy="368" rx="8" ry="22" transform="rotate(-22 92 368)"/>
+      <ellipse cx="78" cy="339" rx="8" ry="22" transform="rotate(-28 78 339)"/>
+      <ellipse cx="71" cy="309" rx="8" ry="22" transform="rotate(-34 71 309)"/>
+      <ellipse cx="72" cy="278" rx="8" ry="22" transform="rotate(-40 72 278)"/>
+      <ellipse cx="80" cy="247" rx="8" ry="22" transform="rotate(-49 80 247)"/>
+      <ellipse cx="90" cy="221" rx="7" ry="19" transform="rotate(-57 90 221)"/>
+      <ellipse cx="422" cy="368" rx="8" ry="22" transform="rotate(22 422 368)"/>
+      <ellipse cx="436" cy="339" rx="8" ry="22" transform="rotate(28 436 339)"/>
+      <ellipse cx="443" cy="309" rx="8" ry="22" transform="rotate(34 443 309)"/>
+      <ellipse cx="442" cy="278" rx="8" ry="22" transform="rotate(40 442 278)"/>
+      <ellipse cx="434" cy="247" rx="8" ry="22" transform="rotate(49 434 247)"/>
+      <ellipse cx="424" cy="221" rx="7" ry="19" transform="rotate(57 424 221)"/>
+    </g>
+    <path d="M256 181 L358 282 L256 384 L154 282 Z" fill="#0b9d68"/>
+    <path d="M256 181 L154 282 L256 384 Z" fill="#5c2b85"/>
+    <path d="M256 181 L358 282 L256 384 Z" fill="#bd202a"/>
+    <g fill="#fff">
+      <path d="M224 215 l6 16 17 1 -13 10 5 16 -15 -9 -15 9 5 -16 -13 -10 17 -1z"/>
+      <path d="M198 247 l6 16 17 1 -13 10 5 16 -15 -9 -15 9 5 -16 -13 -10 17 -1z"/>
+      <path d="M228 276 l6 16 17 1 -13 10 5 16 -15 -9 -15 9 5 -16 -13 -10 17 -1z"/>
+      <path d="M285 226 c-11 -16 -36 -7 -33 12 3 17 33 36 33 36 s30 -19 33 -36 c3 -19 -22 -28 -33 -12z"/>
+    </g>
+    <text x="256" y="303" text-anchor="middle" font-family="Georgia,serif" font-size="12" letter-spacing="2.5" fill="#222">FACITE DIFERENTEM</text>
+  </g>
+  <text x="256" y="464" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="25" font-weight="800" fill="#111">1990</text>
+</svg>
