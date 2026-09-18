@@ -135,3 +135,74 @@ html[data-theme="dark"] .po-suggestions{box-shadow:0 18px 50px rgba(0,0,0,.38)}
 .supplier-suggestions,.requisitioner-suggestions{top:calc(100% + 6px)}
 .supplier-input-wrap input,.requisitioner-input-wrap input{padding-left:34px}
 @media(max-width:700px){.supplier-suggestions,.requisitioner-suggestions{position:absolute;left:0;right:0;top:calc(100% + 6px)}}
+
+
+/* =========================================================
+   POLISHED SISC BRANDING + RESPONSIVE PO / REQUISITIONER LAYOUT
+========================================================= */
+.brand .logo-brand-mark{width:44px;height:44px;padding:3px;border-radius:12px;flex:0 0 auto}
+.brand .logo-brand-mark img{border-radius:8px;background:#fff}
+.auth-brand .logo-brand-mark{width:48px;height:48px;padding:3px;border-radius:13px}
+.auth-card-top .logo-auth-mark{width:48px;height:48px;padding:3px;border-radius:13px;flex:0 0 auto}
+.public-eval-logo{width:54px;height:54px;padding:3px;border-radius:14px;background:#fff;display:grid;place-items:center;flex:0 0 auto;overflow:hidden}
+.public-eval-logo img{width:100%;height:100%;object-fit:contain;border-radius:10px;display:block}
+.public-eval-header{padding:15px 18px;gap:12px}
+.public-eval-header h1{font-size:20px}
+.public-po-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+.public-po-summary>div{min-width:0}
+.public-po-summary strong{display:block;overflow-wrap:anywhere}
+.public-po-paper{scroll-margin-top:15px}
+.public-official-image{max-height:min(820px,72vh)}
+.public-po-frame{height:min(720px,72vh)}
+.public-criterion{padding:13px}
+.public-stars{justify-content:flex-start}
+.public-stars button{padding:1px}
+.public-stars button svg{width:24px;height:24px}
+.public-submit-row{position:sticky;bottom:0;padding:10px 0 0;background:linear-gradient(to bottom,rgba(255,255,255,0),#fff 25%)}
+
+@media(max-width:1100px){
+  .po-generator-modal{width:min(1200px,97vw)}
+  .po-generator-modal-body{grid-template-columns:minmax(0,1fr) 320px;gap:12px}
+  .po-preview-card{padding:12px}
+}
+@media(max-width:900px){
+  .public-eval-shell{padding:18px 10px 36px}
+  .public-eval-wrap{max-width:760px}
+  .public-eval-header{border-radius:14px}
+  .public-po-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .public-po-frame{height:64vh;min-height:500px}
+  .public-official-image{max-height:68vh}
+  .po-generator-modal{max-height:96vh}
+  .po-generator-modal-body{display:flex;flex-direction:column;padding:10px}
+  .po-preview-card{order:2;max-height:56vh}
+  .po-send-panel{order:1;width:100%}
+  .stored-po-frame{height:55vh;min-height:420px}
+}
+@media(max-width:700px){
+  .brand strong{font-size:15px}
+  .topbar{gap:8px}
+  .top-actions .user-chip{max-width:44px;padding:4px}
+  .top-actions .user-chip span,.top-actions .user-chip button{display:none}
+  .public-eval-shell{padding:10px 8px 28px}
+  .public-eval-header{padding:12px 13px}
+  .public-eval-logo{width:46px;height:46px;border-radius:12px}
+  .public-eval-header h1{font-size:18px}
+  .public-eval-header p{font-size:8px}
+  .public-po-summary{gap:7px;margin:10px 0}
+  .public-po-summary>div{padding:9px 10px}
+  .public-po-summary strong{font-size:10px}
+  .public-po-paper-head{padding:10px 12px}
+  .public-po-paper-head b{font-size:10px}
+  .public-po-paper-head span{font-size:6.5px}
+  .public-po-frame{height:58vh;min-height:420px}
+  .public-official-doc-head{align-items:flex-start}
+  .public-official-doc-head a{font-size:10px}
+  .public-submit-row{align-items:stretch;flex-direction:column}
+  .public-submit-row>div{display:flex;align-items:center;justify-content:space-between}
+  .public-submit-row .btn{width:100%}
+  .public-criterion h3{font-size:11px}
+  .public-criterion p{font-size:8px}
+  .public-stars{gap:3px}
+  .public-stars button svg{width:22px;height:22px}
+  .po-action-stack .btn{width:100%}
+}

@@ -1,0 +1,4 @@
+Copy these files into the ROOT of your original final_work project folder and allow overwrite.
+
+This patch does NOT contain .git, node_modules, .next, or .env.local.
+It was NOT pushed to GitHub.

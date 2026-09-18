@@ -8,9 +8,9 @@ export const metadata: Metadata = {
   applicationName: "Purchasing Supplier Evaluation System",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/sisc-logo.svg",
-    shortcut: "/sisc-logo.svg",
-    apple: "/sisc-logo.svg",
+    icon: "/sisc-logo.png",
+    shortcut: "/sisc-logo.png",
+    apple: "/sisc-logo.png",
   },
 };
 
@@ -19,6 +19,6 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({children}:{children:React.ReactNode}) {
   return <html lang="en"><body><PwaRegister />{children}</body></html>;
 }

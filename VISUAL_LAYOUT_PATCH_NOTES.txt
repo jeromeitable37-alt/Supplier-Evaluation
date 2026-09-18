@@ -1,0 +1,10 @@
+Offline visual patch for the Purchasing Supplier Evaluation System.
+
+Updated:
+- Replaced the invalid JPEG-bytes-as-.png logo file with a real PNG.
+- Sidebar/auth/public evaluation now use the SISC logo asset.
+- PWA metadata/manifest use the PNG logo.
+- Generated PO is more compact and print-friendly on US Letter, with SISC logo and PO number header.
+- Requisitioner evaluation page is more responsive on desktop/mobile and shows the official PO cleanly.
+- Requisitioner email layout is branded and responsive.
+- No GitHub push or remote repository changes were made by this patch.

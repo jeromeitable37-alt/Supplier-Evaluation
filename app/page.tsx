@@ -532,10 +532,10 @@ export default function Home() {
         requisitioner: [d.requisitionerA, d.requisitionerB, d.requisitionerC, d.requisitionerD].map(normalize),
         amd: [d.amdA, d.amdB, d.amdC, d.amdD].map(normalize),
       });
-     setEditing(draft);
-setScanOpen(false);
-setPage("evaluations");
-notify("AI scan complete. Review the extracted fields before saving.");
+      setEditing(draft);
+      setScanOpen(false);
+      navigate("evaluations");
+      notify("AI scan complete. Review the extracted fields before saving.");
     } catch (error: any) {
       setScanError(error?.message || "The document could not be processed.");
     } finally {
@@ -572,15 +572,15 @@ notify("AI scan complete. Review the extracted fields before saving.");
   }
   const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "purchase-orders" ? "PO Generator" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
 
-  if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark"><ClipboardCheck size={22}/></div><h1>Loading Purchasing Supplier Evaluation System</h1><p>Checking your secure Firebase session…</p></div></div>;
+  if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><h1>Loading Purchasing Supplier Evaluation System</h1><p>Checking your secure Firebase session…</p></div></div>;
   if (!authUser) return <AuthScreen onSuccess={() => {}} />;
 
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebar ? "open" : "closed"}`}>
         <div className="brand">
-          <div className="brand-mark"><ClipboardCheck size={20} /></div>
-          {sidebar && <div><strong>Supplier</strong><span>Evaluation Pro</span></div>}
+          <div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div>
+          {sidebar && <div><strong>Purchasing Supplier</strong><span>Evaluation System</span></div>}
         </div>
         <div className="workspace-chip">
           <span className="dot" />
@@ -954,7 +954,7 @@ function EvaluationEditor({ value, onCancel, onSave, supplierDirectory }: { valu
             )}
 
             <div className="form-grid">
-              <div className="field supplier-picker-field"><span>Supplier</span><div className="autocomplete-wrap"><div className="po-input-wrap supplier-input-wrap"><Search size={14} className="po-search-icon"/><input value={draft.supplier} placeholder="Search stored suppliers" onFocus={() => setSupplierLookupOpen(true)} onChange={(e) => { set("supplier", e.target.value); setSupplierLookupOpen(true); }} onBlur={() => window.setTimeout(() => setSupplierLookupOpen(false), 180)}/></div>{supplierLookupOpen && supplierSuggestions.length > 0 && <div className="po-suggestions supplier-suggestions">{supplierSuggestions.map((name) => <button type="button" key={name} onMouseDown={(e) => e.preventDefault()} onClick={() => { set("supplier", name); setSupplierLookupOpen(false); }}><div className="po-suggestion-top"><b>{name}</b><span>STORED SUPPLIER</span></div><small>Use this saved supplier name</small></button>)}</div>}</div></div>
+              <div className="field supplier-picker-field"><span>Supplier</span><div className="autocomplete-wrap"><div className="po-input-wrap supplier-input-wrap"><Search size={14} className="po-search-icon"/><input value={draft.supplier} placeholder="Search stored suppliers" onFocus={() => setSupplierLookupOpen(true)} onChange={(e) => { set("supplier", e.target.value); setSupplierLookupOpen(true); }} onBlur={() => window.setTimeout(() => setSupplierLookupOpen(false), 180)}/></div>{supplierLookupOpen && supplierSuggestions.length > 0 && <div className="po-suggestions supplier-suggestions">{supplierSuggestions.map((name) => <button type="button" key={name} onMouseDown={(e) => e.preventDefault()} onClick={() => { set("supplier", name); setSupplierLookupOpen(false); }}><div className="po-suggestion-top"><b>{name}</b><span>STORED SUPPLIER</span></div><small>Select a supplier from your saved evaluation history</small></button>)}</div>}</div></div>
               <Field label="Evaluation date" type="date" value={draft.evaluationDate} onChange={(v) => set("evaluationDate", v)} />
 
               <div className="field po-lookup-field">
@@ -1294,7 +1294,7 @@ function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
     finally { setBusy(false); }
   }
   async function google() { try { setBusy(true); setError(""); await signInWithGoogle(); onSuccess(); } catch (err: any) { setError(err?.message?.replace("Firebase: ", "") || "Google sign-in failed."); } finally { setBusy(false); } }
-  return <div className="auth-shell"><div className="auth-visual"><div className="auth-orbit one"/><div className="auth-orbit two"/><div className="auth-brand"><div className="brand-mark"><ClipboardCheck size={26}/></div><div><b>Purchasing Supplier Evaluation System</b><span>Purchasing workspace</span></div></div><div className="auth-copy"><div className="eyebrow"><span className="eyebrow-dot"/> SECURE PURCHASING WORKSPACE</div><h1>Scan. Evaluate. Decide.</h1><p>Keep supplier evaluations, AI extraction, ratings, reports and Excel backups in one secure cloud workspace.</p><div className="auth-features"><span>✓ Firebase cloud database</span><span>✓ AI document scanning</span><span>✓ Multi-device access</span></div></div></div><div className="auth-card"><div className="auth-card-top"><div className="auth-mini-mark"><ClipboardCheck size={20}/></div><div><div className="eyebrow">{mode === "signin" ? "WELCOME BACK" : "NEW ACCOUNT"}</div><h2>{mode === "signin" ? "Sign in to your workspace" : "Create your account"}</h2><p>{mode === "signin" ? "Access your supplier evaluation database." : "Create a secure Purchasing Office account."}</p></div></div><button className="google-btn" onClick={google} disabled={busy}><span className="google-g">G</span> Continue with Google</button><div className="auth-divider"><span>or continue with email</span></div><form onSubmit={submit}><label className="auth-field"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.edu" required/></label><label className="auth-field"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 6 characters" minLength={6} required/></label>{error && <div className="auth-error"><AlertCircle size={16}/><span>{error}</span></div>}<button className="btn primary auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}>{mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}</button><small className="auth-note">Your account is handled by Firebase Authentication. Passwords are never stored in the supplier evaluation database.</small></div></div>;
+  return <div className="auth-shell"><div className="auth-visual"><div className="auth-orbit one"/><div className="auth-orbit two"/><div className="auth-brand"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><b>Purchasing Supplier Evaluation System</b><span>Purchasing workspace</span></div></div><div className="auth-copy"><div className="eyebrow"><span className="eyebrow-dot"/> SECURE PURCHASING WORKSPACE</div><h1>Scan. Evaluate. Decide.</h1><p>Keep supplier evaluations, AI extraction, ratings, reports and Excel backups in one secure cloud workspace.</p><div className="auth-features"><span>✓ Firebase cloud database</span><span>✓ AI document scanning</span><span>✓ Multi-device access</span></div></div></div><div className="auth-card"><div className="auth-card-top"><div className="auth-mini-mark logo-auth-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><div className="eyebrow">{mode === "signin" ? "WELCOME BACK" : "NEW ACCOUNT"}</div><h2>{mode === "signin" ? "Sign in to your workspace" : "Create your account"}</h2><p>{mode === "signin" ? "Access your supplier evaluation database." : "Create a secure Purchasing Office account."}</p></div></div><button className="google-btn" onClick={google} disabled={busy}><span className="google-g">G</span> Continue with Google</button><div className="auth-divider"><span>or continue with email</span></div><form onSubmit={submit}><label className="auth-field"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.edu" required/></label><label className="auth-field"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 6 characters" minLength={6} required/></label>{error && <div className="auth-error"><AlertCircle size={16}/><span>{error}</span></div>}<button className="btn primary auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}>{mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}</button><small className="auth-note">Your account is handled by Firebase Authentication. Passwords are never stored in the supplier evaluation database.</small></div></div>;
 }
 
 function ScanModal({ busy, error, onClose, onFile }: { busy: boolean; error: string; onClose: () => void; onFile: (file: File) => void }) {

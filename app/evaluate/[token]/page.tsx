@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardCheck, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
+import { CheckCircle2, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
 import { buildPurchaseOrderHtml } from "../../../components/PurchaseOrderGenerator";
 
@@ -74,7 +74,7 @@ export default function EvaluationPage() {
   const po = link.po;
   const officialDocument = po.documentUrl || "";
   return <div className="public-eval-shell"><div className="public-eval-wrap">
-    <section className="public-eval-header"><div className="public-eval-logo"><ClipboardCheck size={21}/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
+    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
     <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
 
     <section className="public-po-paper">
