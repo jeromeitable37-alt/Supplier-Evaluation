@@ -1,0 +1,19 @@
+{
+  "name": "Purchasing Supplier Evaluation System",
+  "short_name": "Purchasing Evaluation",
+  "description": "Purchasing Supplier Evaluation System for supplier evaluations, PO documents, and reports.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f7f8f7",
+  "theme_color": "#4f247c",
+  "icons": [
+    {
+      "src": "/sisc-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
