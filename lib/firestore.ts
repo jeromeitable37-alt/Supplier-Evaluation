@@ -363,6 +363,7 @@ export type PurchaseOrder = {
   poNumber: string;
   prfNumber: string;
   requisitioner: string;
+  requisitionerEmail?: string;
   department: string;
   purpose: string;
   vendorName: string;
