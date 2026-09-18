@@ -5,6 +5,8 @@ export const revalidate = 0;
 
 type CsvRow = Record<string, string>;
 
+type RequisitionerContact = { name: string; email: string; department: string };
+
 type PurchaseOrderMatch = {
   poNumber: string;
   prfNumber: string;
@@ -23,6 +25,7 @@ type PurchaseOrderMatch = {
   buyerName: string;
   buyerEmail: string;
   requisitioner: string;
+  requisitionerEmail: string;
   department: string;
   purpose: string;
   quantity: number | string;
@@ -33,11 +36,12 @@ type PurchaseOrderMatch = {
 };
 
 type PurchaseOrderRecord = { poNumber: string; matches: PurchaseOrderMatch[] };
-type PrfRecord = { prfNumber: string; requisitioner: string; department: string; itemDescription: string; purpose: string };
+type PrfRecord = { prfNumber: string; requisitioner: string; requisitionerEmail: string; department: string; itemDescription: string; purpose: string };
 
 const DEFAULT_SHEET_ID = "1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA";
 const DEFAULT_PO_SHEET = "PO for Evaluation";
 const DEFAULT_PRF_SHEET = "PRF Details v2";
+const DEFAULT_EMPLOYEE_SHEET = "Employee";
 
 function normalize(value: unknown) { return String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function clean(value: unknown) { return String(value ?? "").replace(/\u0000/g, "").trim(); }
@@ -118,6 +122,7 @@ function buildPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
       buyerName: pick(row, ["Buyer", "Buyer Name", "Purchaser", "Prepared By"]),
       buyerEmail: pick(row, ["Buyer Email", "Purchaser Email"]),
       requisitioner: pick(row, ["Requisitioner", "Requisitioner Name"]),
+      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email", "Email"]),
       department: pick(row, ["Department"]),
       purpose: pick(row, ["Purpose"]),
       quantity: pickNumber(row, ["Qty", "Quantity"]),
@@ -143,6 +148,7 @@ function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
     const record: PrfRecord = {
       prfNumber,
       requisitioner: pick(row, ["REQUISITIONER", "Requisitioner Name", "Requisitioner"]),
+      requisitionerEmail: pick(row, ["REQUISITIONER EMAIL", "Requisitioner Email", "Employee Email", "Email"]),
       department: pick(row, ["DEPARTMENT", "Department"]),
       itemDescription: pick(row, ["ITEM DESCRIPTION", "Item Description", "Items Delivered", "Item/s Delivered"]),
       purpose: pick(row, ["PURPOSE", "PURPOSE ", "Purpose"]),
@@ -153,15 +159,32 @@ function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
   return Array.from(map.values()).sort((a, b) => a.prfNumber.localeCompare(b.prfNumber, undefined, { numeric: true }));
 }
 
+function buildRequisitionerContacts(rows: CsvRow[]): RequisitionerContact[] {
+  const map = new Map<string, RequisitionerContact>();
+  for (const row of rows) {
+    const name = pick(row, ["f_name", "full_name", "name", "employee name", "requisitioner", "requisitioner name"]);
+    const email = pick(row, ["email", "employee email", "requisitioner email"]);
+    const department = pick(row, ["department"]);
+    if (!name || !email || !email.includes("@")) continue;
+    const key = name.toLowerCase().trim();
+    if (!map.has(key)) map.set(key, { name, email: email.toLowerCase(), department });
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function GET() {
   const sheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
   const poSheet = process.env.GOOGLE_SUPPLIER_PO_SHEET || DEFAULT_PO_SHEET;
   const prfSheet = process.env.GOOGLE_SUPPLIER_PRF_SHEET || DEFAULT_PRF_SHEET;
+  const employeeSheet = process.env.GOOGLE_SUPPLIER_EMPLOYEE_SHEET || DEFAULT_EMPLOYEE_SHEET;
   const poUrl = process.env.GOOGLE_SUPPLIER_PO_CSV_URL;
   const prfUrl = process.env.GOOGLE_SUPPLIER_PRF_CSV_URL;
+  const employeeUrl = process.env.GOOGLE_SUPPLIER_EMPLOYEE_CSV_URL;
   try {
     const [poRows, prfRows] = await Promise.all([fetchCsv(sheetId, poSheet, poUrl), fetchCsv(sheetId, prfSheet, prfUrl)]);
-    return NextResponse.json({ ok: true, source: "google-sheets", fetchedAt: new Date().toISOString(), spreadsheetId: sheetId, poSheet, prfSheet, poRecords: buildPoRecords(poRows), prfRecords: buildPrfRecords(prfRows) }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+    let employeeRows: CsvRow[] = [];
+    try { employeeRows = await fetchCsv(sheetId, employeeSheet, employeeUrl); } catch { employeeRows = []; }
+    return NextResponse.json({ ok: true, source: "google-sheets", fetchedAt: new Date().toISOString(), spreadsheetId: sheetId, poSheet, prfSheet, employeeSheet, poRecords: buildPoRecords(poRows), prfRecords: buildPrfRecords(prfRows), requisitioners: buildRequisitionerContacts(employeeRows) }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (error) {
     return NextResponse.json({ ok: false, source: "google-sheets", message: error instanceof Error ? error.message : "Unable to read Google Sheets." }, { status: 503, headers: { "Cache-Control": "no-store, max-age=0" } });
   }
