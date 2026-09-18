@@ -532,10 +532,10 @@ export default function Home() {
         requisitioner: [d.requisitionerA, d.requisitionerB, d.requisitionerC, d.requisitionerD].map(normalize),
         amd: [d.amdA, d.amdB, d.amdC, d.amdD].map(normalize),
       });
-      setEditing(draft);
-      setScanOpen(false);
-      navigate("evaluations");
-      notify("AI scan complete. Review the extracted fields before saving.");
+     setEditing(draft);
+setScanOpen(false);
+setPage("evaluations");
+notify("AI scan complete. Review the extracted fields before saving.");
     } catch (error: any) {
       setScanError(error?.message || "The document could not be processed.");
     } finally {
