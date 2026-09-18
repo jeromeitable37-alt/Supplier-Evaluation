@@ -254,7 +254,7 @@ export default function Home() {
   const [ocrBusy, setOcrBusy] = useState(false);
   const [scanError, setScanError] = useState("");
   const [toast, setToast] = useState("");
-  const [settings, setSettings] = useState({ office: "Purchasing Office", name: "Supplier Evaluation Pro" });
+  const [settings, setSettings] = useState({ office: "Purchasing Office", name: "Purchasing Supplier Evaluation System" });
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [dbLoading, setDbLoading] = useState(true);
   const [dbError, setDbError] = useState("");
@@ -572,7 +572,7 @@ notify("AI scan complete. Review the extracted fields before saving.");
   }
   const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "purchase-orders" ? "PO Generator" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
 
-  if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark"><ClipboardCheck size={22}/></div><h1>Loading Supplier Evaluation Pro</h1><p>Checking your secure Firebase session…</p></div></div>;
+  if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark"><ClipboardCheck size={22}/></div><h1>Loading Purchasing Supplier Evaluation System</h1><p>Checking your secure Firebase session…</p></div></div>;
   if (!authUser) return <AuthScreen onSuccess={() => {}} />;
 
   return (
@@ -632,7 +632,7 @@ notify("AI scan complete. Review the extracted fields before saving.");
         </div>
       </main>
 
-      {editing && <EvaluationEditor value={editing} onCancel={() => setEditing(null)} onSave={saveEvaluation} />}
+      {editing && <EvaluationEditor value={editing} onCancel={() => setEditing(null)} onSave={saveEvaluation} supplierDirectory={suppliers} />}
       {viewing && <EvaluationViewer value={viewing} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setViewing(null); }} onDelete={() => removeEvaluation(viewing.id)} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
       {scanOpen && <ScanModal busy={ocrBusy} error={scanError} onClose={() => { if (!ocrBusy) setScanOpen(false); }} onFile={scanFile} />}
       {dbLoading && <div className="db-loading"><div className="loader-ring"/><div><b>Connecting to Firebase…</b><span>Loading your supplier evaluation database</span></div></div>}
@@ -739,7 +739,7 @@ function Detail({ label, value }: { label: string; value?: string }) { return <d
 function ScoreSummary({ title, value, final }: { title: string; value: number; final?: boolean }) { return <div className={`score-summary-card ${final ? "final" : ""}`}><span>{title}</span><strong>{value ? value.toFixed(2) : "—"}</strong>{value > 0 && <small>{recommendation(value)}</small>}</div>; }
 function CriterionBlock({ title, labels, values }: { title: string; labels: string[]; values: Rating[] }) { return <div className="criterion-block"><b>{title}</b>{labels.map((label, i) => <div className="criterion-row" key={label}><span>{label}</span><strong>{values[i] ?? "—"}</strong></div>)}</div>; }
 
-function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCancel: () => void; onSave: (x: Evaluation) => void }) {
+function EvaluationEditor({ value, onCancel, onSave, supplierDirectory }: { value: Evaluation; onCancel: () => void; onSave: (x: Evaluation) => void; supplierDirectory: string[] }) {
   const [draft, setDraft] = useState(value);
   const [poRecords, setPoRecords] = useState<PurchaseOrderRecord[]>([]);
   const [prfRecords, setPrfRecords] = useState<PrfRecord[]>([]);
@@ -751,6 +751,7 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
   const [lookupOpen, setLookupOpen] = useState(false);
   const [lookupQuery, setLookupQuery] = useState(value.prfNo || value.poNumber || "");
   const [lookupNotice, setLookupNotice] = useState("");
+  const [supplierLookupOpen, setSupplierLookupOpen] = useState(false);
   const lastAutoFilledKey = useRef("");
 
   useEffect(() => setDraft(value), [value]);
@@ -797,6 +798,12 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
 
   const set = (key: keyof Evaluation, next: any) => setDraft((old) => ({ ...old, [key]: next }));
   const computed = compute(draft);
+
+  const supplierSuggestions = useMemo(() => {
+    const q = draft.supplier.trim().toLowerCase();
+    const filtered = q ? supplierDirectory.filter((name) => name.toLowerCase().includes(q)) : supplierDirectory;
+    return filtered.slice(0, 8);
+  }, [draft.supplier, supplierDirectory]);
 
   const historicalRecord = String(value.id).startsWith("seed-") || String(value.id).startsWith("excel-") || value.source === "Imported workbook";
   const lookupEnabled = !historicalRecord;
@@ -947,7 +954,7 @@ function EvaluationEditor({ value, onCancel, onSave }: { value: Evaluation; onCa
             )}
 
             <div className="form-grid">
-              <Field label="Supplier" value={draft.supplier} onChange={(v) => set("supplier", v)} placeholder="Supplier / company name" />
+              <div className="field supplier-picker-field"><span>Supplier</span><div className="autocomplete-wrap"><div className="po-input-wrap supplier-input-wrap"><Search size={14} className="po-search-icon"/><input value={draft.supplier} placeholder="Search stored suppliers" onFocus={() => setSupplierLookupOpen(true)} onChange={(e) => { set("supplier", e.target.value); setSupplierLookupOpen(true); }} onBlur={() => window.setTimeout(() => setSupplierLookupOpen(false), 180)}/></div>{supplierLookupOpen && supplierSuggestions.length > 0 && <div className="po-suggestions supplier-suggestions">{supplierSuggestions.map((name) => <button type="button" key={name} onMouseDown={(e) => e.preventDefault()} onClick={() => { set("supplier", name); setSupplierLookupOpen(false); }}><div className="po-suggestion-top"><b>{name}</b><span>STORED SUPPLIER</span></div><small>Use this saved supplier name</small></button>)}</div>}</div></div>
               <Field label="Evaluation date" type="date" value={draft.evaluationDate} onChange={(v) => set("evaluationDate", v)} />
 
               <div className="field po-lookup-field">
@@ -1202,7 +1209,7 @@ function ProfileView({ profile, theme, accent, onAccent, onTheme, onSave }: { pr
             <div className="route-security-box"><small>REGISTERED EMAIL</small><b>{draft.email}</b></div>
             <div className="route-security-box"><small>SYSTEM ACCESS</small><b>{roleLabel(draft.role)} · {draft.active ? "Active account" : "Disabled account"}</b></div>
           </div>
-          <div className="route-password-row"><div><b>Password protection</b><span>Supplier Evaluation Pro never stores a readable password. Request a secure reset link when you need to create a new one.</span></div><button className="btn secondary" onClick={sendReset} disabled={resetting}>{resetting ? "Sending…" : "Send reset link"}</button></div>
+          <div className="route-password-row"><div><b>Password protection</b><span>Purchasing Supplier Evaluation System never stores a readable password. Request a secure reset link when you need to create a new one.</span></div><button className="btn secondary" onClick={sendReset} disabled={resetting}>{resetting ? "Sending…" : "Send reset link"}</button></div>
         </section>
       </div>
 
@@ -1287,7 +1294,7 @@ function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
     finally { setBusy(false); }
   }
   async function google() { try { setBusy(true); setError(""); await signInWithGoogle(); onSuccess(); } catch (err: any) { setError(err?.message?.replace("Firebase: ", "") || "Google sign-in failed."); } finally { setBusy(false); } }
-  return <div className="auth-shell"><div className="auth-visual"><div className="auth-orbit one"/><div className="auth-orbit two"/><div className="auth-brand"><div className="brand-mark"><ClipboardCheck size={26}/></div><div><b>Supplier Evaluation Pro</b><span>Purchasing workspace</span></div></div><div className="auth-copy"><div className="eyebrow"><span className="eyebrow-dot"/> SECURE PURCHASING WORKSPACE</div><h1>Scan. Evaluate. Decide.</h1><p>Keep supplier evaluations, AI extraction, ratings, reports and Excel backups in one secure cloud workspace.</p><div className="auth-features"><span>✓ Firebase cloud database</span><span>✓ AI document scanning</span><span>✓ Multi-device access</span></div></div></div><div className="auth-card"><div className="auth-card-top"><div className="auth-mini-mark"><ClipboardCheck size={20}/></div><div><div className="eyebrow">{mode === "signin" ? "WELCOME BACK" : "NEW ACCOUNT"}</div><h2>{mode === "signin" ? "Sign in to your workspace" : "Create your account"}</h2><p>{mode === "signin" ? "Access your supplier evaluation database." : "Create a secure Purchasing Office account."}</p></div></div><button className="google-btn" onClick={google} disabled={busy}><span className="google-g">G</span> Continue with Google</button><div className="auth-divider"><span>or continue with email</span></div><form onSubmit={submit}><label className="auth-field"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.edu" required/></label><label className="auth-field"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 6 characters" minLength={6} required/></label>{error && <div className="auth-error"><AlertCircle size={16}/><span>{error}</span></div>}<button className="btn primary auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}>{mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}</button><small className="auth-note">Your account is handled by Firebase Authentication. Passwords are never stored in the supplier evaluation database.</small></div></div>;
+  return <div className="auth-shell"><div className="auth-visual"><div className="auth-orbit one"/><div className="auth-orbit two"/><div className="auth-brand"><div className="brand-mark"><ClipboardCheck size={26}/></div><div><b>Purchasing Supplier Evaluation System</b><span>Purchasing workspace</span></div></div><div className="auth-copy"><div className="eyebrow"><span className="eyebrow-dot"/> SECURE PURCHASING WORKSPACE</div><h1>Scan. Evaluate. Decide.</h1><p>Keep supplier evaluations, AI extraction, ratings, reports and Excel backups in one secure cloud workspace.</p><div className="auth-features"><span>✓ Firebase cloud database</span><span>✓ AI document scanning</span><span>✓ Multi-device access</span></div></div></div><div className="auth-card"><div className="auth-card-top"><div className="auth-mini-mark"><ClipboardCheck size={20}/></div><div><div className="eyebrow">{mode === "signin" ? "WELCOME BACK" : "NEW ACCOUNT"}</div><h2>{mode === "signin" ? "Sign in to your workspace" : "Create your account"}</h2><p>{mode === "signin" ? "Access your supplier evaluation database." : "Create a secure Purchasing Office account."}</p></div></div><button className="google-btn" onClick={google} disabled={busy}><span className="google-g">G</span> Continue with Google</button><div className="auth-divider"><span>or continue with email</span></div><form onSubmit={submit}><label className="auth-field"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.edu" required/></label><label className="auth-field"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 6 characters" minLength={6} required/></label>{error && <div className="auth-error"><AlertCircle size={16}/><span>{error}</span></div>}<button className="btn primary auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}>{mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}</button><small className="auth-note">Your account is handled by Firebase Authentication. Passwords are never stored in the supplier evaluation database.</small></div></div>;
 }
 
 function ScanModal({ busy, error, onClose, onFile }: { busy: boolean; error: string; onClose: () => void; onFile: (file: File) => void }) {
