@@ -251,9 +251,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       const po = normalizeKey(row.poNumber);
       if (!po) return;
       const role = String(row.evaluatorRole || "").toLowerCase();
-      const reqAvg = Number(row.requisitionerAvg || 0);
       const source = String(row.source || "").toLowerCase();
-      if (role === "requisitioner" || source.includes("requisitioner web evaluation") || reqAvg > 0) set.add(po);
+      if (role === "requisitioner" || source.includes("requisitioner web evaluation")) set.add(po);
     });
     return set;
   }, [evaluationRows]);
@@ -276,7 +275,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       return [group.poNumber, ...group.matches.flatMap((m) => [m.prfNumber, m.supplier, m.itemsDelivered, m.requisitioner, m.department])]
         .join(" ").toLowerCase().includes(q);
     });
-    return all.slice(0, 200);
+    return all;
   }, [poRecords, query, queueOnly, submittedByPo]);
 
   function buildFromSheet(group: PurchaseOrderSheetRecord): PurchaseOrder {
@@ -300,8 +299,12 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         };
       });
     const items = rows.length ? rows : [{ line: 1, description: first.itemsDelivered || prf?.itemDescription || "", unit: first.unit || "pcs", qty: first.quantity ?? "", unitPrice: first.unitPrice ?? "", itemDiscountPct: first.itemDiscountPct ?? 0, lineTotal: first.lineTotal ?? "" }];
-    const subtotal = items.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice), 0);
-    const total = items.reduce((sum, item) => sum + (amount(item.lineTotal) || amount(item.qty) * amount(item.unitPrice)), 0);
+    const calculatedSubtotal = items.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice), 0);
+    const calculatedTotal = items.reduce((sum, item) => sum + (amount(item.lineTotal) || amount(item.qty) * amount(item.unitPrice)), 0);
+    const sheetSubtotal = amount((first as any).subtotal);
+    const sheetTotal = amount((first as any).total);
+    const subtotal = sheetSubtotal || calculatedSubtotal;
+    const total = sheetTotal || calculatedTotal;
     const id = `po-${String(group.poNumber).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     const saved = savedByPo.get(normalizeKey(group.poNumber));
     return {
@@ -323,10 +326,10 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       expectedDate: first.expectedDate || saved?.expectedDate || "",
       paymentTerms: first.paymentTerms || saved?.paymentTerms || "",
       notes: first.notes || saved?.notes || "",
-      subtotal: saved?.subtotal || subtotal,
-      discountPct: saved?.discountPct || 0,
-      discountAmt: saved?.discountAmt || 0,
-      total: saved?.total || total,
+      subtotal: saved?.subtotal ?? subtotal,
+      discountPct: saved?.discountPct ?? amount((first as any).discountPct),
+      discountAmt: saved?.discountAmt ?? amount((first as any).discountAmt),
+      total: saved?.total ?? total,
       buyerName: first.buyerName || saved?.buyerName || currentUser?.displayName || "",
       buyerEmail: first.buyerEmail || saved?.buyerEmail || currentUser?.email || "",
       approverName: saved?.approverName || "",

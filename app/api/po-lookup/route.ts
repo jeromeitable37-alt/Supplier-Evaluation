@@ -36,15 +36,32 @@ type PurchaseOrderMatch = {
   actualDeliveryDate: string;
   receivedBy: string;
   status: string;
+  subtotal: number | string;
+  discountPct: number | string;
+  discountAmt: number | string;
+  total: number | string;
 };
 
 type PurchaseOrderRecord = { poNumber: string; matches: PurchaseOrderMatch[] };
-type PrfRecord = { prfNumber: string; requisitioner: string; requisitionerEmail: string; department: string; itemDescription: string; purpose: string };
+type PrfRecord = {
+  prfNumber: string;
+  poNumber?: string;
+  requisitioner: string;
+  requisitionerEmail: string;
+  department: string;
+  itemDescription: string;
+  purpose: string;
+};
 
 const DEFAULT_SHEET_ID = "1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA";
 const DEFAULT_PO_SHEET = "PO for Evaluation";
 const DEFAULT_PRF_SHEET = "PRF Details v2";
 const DEFAULT_EMPLOYEE_SHEET = "Employee";
+
+// Legacy/source-of-truth sheets used by Sir JC's Apps Script.
+const DEFAULT_LEGACY_PO_SHEET = "POs";
+const DEFAULT_LEGACY_ITEM_SHEET = "Items";
+const DEFAULT_LEGACY_REQUEST_SHEET = "Requests";
 
 function normalize(value: unknown) { return String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function clean(value: unknown) { return String(value ?? "").replace(/\u0000/g, "").trim(); }
@@ -79,8 +96,11 @@ function parseCsv(text: string): string[][] {
 function toObjects(csv: string): CsvRow[] {
   const rows = parseCsv(csv);
   const headers = (rows.shift() || []).map(clean);
-  return rows.filter((row) => row.some((cell) => clean(cell))).map((row) => Object.fromEntries(headers.map((header, index) => [header, clean(row[index] ?? "")])));
+  return rows.filter((row) => row.some((cell) => clean(cell))).map((row) =>
+    Object.fromEntries(headers.map((header, index) => [header, clean(row[index] ?? "")]))
+  );
 }
+
 function normalizeHeader(value: string) { return value.toLowerCase().replace(/[^a-z0-9]/g, ""); }
 function pick(row: CsvRow, candidates: string[]) {
   const entries = Object.entries(row);
@@ -102,48 +122,191 @@ async function fetchCsv(sheetId: string, sheetName: string, explicitUrl?: string
   return toObjects(text);
 }
 
-function buildPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
-  const grouped = new Map<string, PurchaseOrderMatch[]>();
+function emptyMatch(poNumber: string): PurchaseOrderMatch {
+  return {
+    poNumber,
+    prfNumber: "",
+    itemsDelivered: "",
+    supplier: "",
+    deliveryAddress: "",
+    expectedDate: "",
+    orderDate: "",
+    paymentTerms: "",
+    attention: "",
+    vendorPhone: "",
+    vendorEmail: "",
+    vendorAddress: "",
+    vendorCity: "",
+    notes: "",
+    buyerName: "",
+    buyerEmail: "",
+    requisitioner: "",
+    requisitionerEmail: "",
+    department: "",
+    purpose: "",
+    quantity: "",
+    unit: "",
+    unitPrice: "",
+    lineTotal: "",
+    itemDiscountPct: "",
+    actualDeliveryDate: "",
+    receivedBy: "",
+    status: "Pending",
+    subtotal: "",
+    discountPct: "",
+    discountAmt: "",
+    total: "",
+  };
+}
+
+function mergeInto(map: Map<string, PurchaseOrderRecord>, match: PurchaseOrderMatch) {
+  const key = normalize(match.poNumber);
+  if (!key) return;
+  const current = map.get(key) || { poNumber: match.poNumber, matches: [] };
+  const signature = [match.prfNumber, match.itemsDelivered, match.supplier, match.quantity, match.unit, match.unitPrice, match.lineTotal].map(normalize).join("|");
+  const existing = current.matches.find((item) =>
+    [item.prfNumber, item.itemsDelivered, item.supplier, item.quantity, item.unit, item.unitPrice, item.lineTotal].map(normalize).join("|") === signature
+  );
+  if (!existing) current.matches.push(match);
+  else {
+    // Enrich the already-existing line with fields from another source without replacing real values.
+    (Object.keys(match) as (keyof PurchaseOrderMatch)[]).forEach((field) => {
+      const value = match[field];
+      const currentValue = existing[field];
+      if ((currentValue === "" || currentValue === undefined || currentValue === null) && value !== "") (existing as any)[field] = value;
+    });
+  }
+  map.set(key, current);
+}
+
+function buildFlatPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
+  const grouped = new Map<string, PurchaseOrderRecord>();
   for (const row of rows) {
-    const poNumber = pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "P.O. Number", "PO"]);
+    const poNumber = pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "P.O. Number", "PO", "po_number"]);
     if (!poNumber) continue;
     const match: PurchaseOrderMatch = {
       poNumber,
-      prfNumber: pick(row, ["PRF Number", "PRF No", "PRF #", "PRF", "PRF No."]),
-      itemsDelivered: pick(row, ["Items Delivered", "Item/s Delivered", "Items", "Item Description", "Particulars", "Particular"]),
-      supplier: pick(row, ["Supplier", "Supplier Name", "Vendor", "Company Name"]),
-      deliveryAddress: pick(row, ["Delivery Address", "Delivery To", "Ship To", "Address"]),
-      expectedDate: pick(row, ["Delivery Date", "Expected Date", "Expected Delivery", "Delivery"]),
-      orderDate: pick(row, ["Date", "Order Date", "PO Date", "Created Date"]),
-      paymentTerms: pick(row, ["Terms", "Payment Terms", "Terms of Payment"]),
+      prfNumber: pick(row, ["PRF Number", "PRF No", "PRF #", "PRF", "PRF No.", "prf_no", "prf_srf_no"]),
+      itemsDelivered: pick(row, ["Items Delivered", "Item/s Delivered", "Items", "Item Description", "Particulars", "Particular", "description"]),
+      supplier: pick(row, ["Supplier", "Supplier Name", "Vendor", "Company Name", "vendor_name"]),
+      deliveryAddress: pick(row, ["Delivery Address", "Delivery To", "Ship To", "Address", "delivery_address"]),
+      expectedDate: pick(row, ["Delivery Date", "Expected Date", "Expected Delivery", "Delivery", "expected_date"]),
+      orderDate: pick(row, ["Date", "Order Date", "PO Date", "Created Date", "created_at"]),
+      paymentTerms: pick(row, ["Terms", "Payment Terms", "Terms of Payment", "payment_terms"]),
       attention: pick(row, ["Attention", "Contact Person", "Contact"]),
       vendorPhone: pick(row, ["Tel. / Fax No.", "Tel/Fax", "Phone", "Telephone", "Contact Number"]),
       vendorEmail: pick(row, ["Supplier Email", "Vendor Email", "Email"]),
       vendorAddress: pick(row, ["Supplier Address", "Vendor Address", "Company Address"]),
       vendorCity: pick(row, ["City", "Supplier City", "Vendor City"]),
       notes: pick(row, ["Notes", "Remarks", "Instructions"]),
-      buyerName: pick(row, ["Buyer", "Buyer Name", "Purchaser", "Prepared By"]),
+      buyerName: pick(row, ["Buyer", "Buyer Name", "Purchaser", "Prepared By", "buyer_name"]),
       buyerEmail: pick(row, ["Buyer Email", "Purchaser Email"]),
       requisitioner: pick(row, ["Requisitioner", "Requisitioner Name"]),
-      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email", "Email"]),
+      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email"]),
       department: pick(row, ["Department"]),
       purpose: pick(row, ["Purpose"]),
-      quantity: pickNumber(row, ["Qty", "Quantity"]),
+      quantity: pickNumber(row, ["Qty", "Quantity", "qty"]),
       unit: pick(row, ["Unit", "UOM"]),
-      unitPrice: pickNumber(row, ["Unit Price", "Price"]),
-      lineTotal: pickNumber(row, ["Total Amount", "Line Total", "Amount"]),
-      itemDiscountPct: pickNumber(row, ["Disc %", "Discount %", "Item Discount %"]),
-      actualDeliveryDate: pick(row, ["Actual Delivery Date", "Actual Delivery", "Delivery Received Date"]),
-      receivedBy: pick(row, ["Received By", "Received by", "Received"]),
-      status: pick(row, ["Status", "Delivery Status", "PO Status"]),
+      unitPrice: pickNumber(row, ["Unit Price", "Price", "unit_price"]),
+      lineTotal: pickNumber(row, ["Total Amount", "Line Total", "Amount", "line_total"]),
+      itemDiscountPct: pickNumber(row, ["Disc %", "Discount %", "Item Discount %", "item_discount_pct"]),
+      actualDeliveryDate: pick(row, ["Actual Delivery Date", "Actual Delivery", "Delivery Received Date", "actual_delivery_date"]),
+      receivedBy: pick(row, ["Received By", "Received by", "Received", "received_by"]),
+      status: pick(row, ["Status", "Delivery Status", "PO Status", "status"]) || "Pending",
+      subtotal: pickNumber(row, ["Subtotal", "Sub Total", "subtotal"]),
+      discountPct: pickNumber(row, ["Discount %", "Overall Discount %", "discount_pct"]),
+      discountAmt: pickNumber(row, ["Discount Amount", "Discount Amt", "discount_amt"]),
+      total: pickNumber(row, ["Grand Total", "PO Total", "Total", "Total Amount", "total"]),
     };
-    const key = normalize(poNumber);
-    const list = grouped.get(key) || [];
-    const signature = [match.prfNumber, match.itemsDelivered, match.supplier, match.quantity, match.unitPrice, match.lineTotal].map(normalize).join("|");
-    if (!list.some((item) => [item.prfNumber, item.itemsDelivered, item.supplier, item.quantity, item.unitPrice, item.lineTotal].map(normalize).join("|") === signature)) list.push(match);
-    grouped.set(key, list);
+    mergeInto(grouped, match);
   }
-  return Array.from(grouped.values()).map((matches) => ({ poNumber: matches[0].poNumber, matches })).sort((a, b) => a.poNumber.localeCompare(b.poNumber, undefined, { numeric: true }));
+  return Array.from(grouped.values()).map((record) => ({
+    ...record,
+    matches: record.matches.length ? record.matches : [emptyMatch(record.poNumber)],
+  }));
+}
+
+function buildLegacyStructuredPoRecords(poRows: CsvRow[], itemRows: CsvRow[], requestRows: CsvRow[]): PurchaseOrderRecord[] {
+  const itemsByPo = new Map<string, CsvRow[]>();
+  itemRows.forEach((row) => {
+    const poNumber = pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "PO", "po_number"]);
+    if (!poNumber) return;
+    const key = normalize(poNumber);
+    const list = itemsByPo.get(key) || [];
+    list.push(row);
+    itemsByPo.set(key, list);
+  });
+
+  const requestByPo = new Map<string, CsvRow>();
+  requestRows.forEach((row) => {
+    const poNumber = pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "PO", "po_number"]);
+    if (!poNumber) return;
+    requestByPo.set(normalize(poNumber), row);
+  });
+
+  const output = new Map<string, PurchaseOrderRecord>();
+  for (const row of poRows) {
+    const poNumber = pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "P.O. Number", "PO", "po_number"]);
+    if (!poNumber) continue;
+    const request = requestByPo.get(normalize(poNumber));
+    const base = emptyMatch(poNumber);
+    base.supplier = pick(row, ["Vendor Name", "Supplier", "Supplier Name", "Vendor", "Company Name", "vendor_name"]);
+    base.deliveryAddress = pick(row, ["Delivery Address", "Delivery To", "Ship To", "delivery_address"]);
+    base.expectedDate = pick(row, ["Expected Date", "Delivery Date", "Expected Delivery", "expected_date"]);
+    base.orderDate = pick(row, ["Order Date", "PO Date", "Date", "created_at"]);
+    base.notes = pick(row, ["Notes", "Remarks", "notes"]);
+    base.paymentTerms = pick(row, ["Terms", "Payment Terms", "Terms of Payment", "payment_terms"]);
+    base.subtotal = pickNumber(row, ["Subtotal", "Sub Total", "subtotal"]);
+    base.discountPct = pickNumber(row, ["Discount %", "Overall Discount %", "discount_pct"]);
+    base.discountAmt = pickNumber(row, ["Discount Amount", "Discount Amt", "discount_amt"]);
+    base.total = pickNumber(row, ["Grand Total", "PO Total", "Total", "Total Amount", "total"]);
+    base.status = pick(row, ["Status", "PO Status", "Delivery Status", "status"]) || "Pending";
+    base.actualDeliveryDate = pick(row, ["Actual Delivery Date", "Actual Delivery", "actual_delivery_date"]);
+    base.receivedBy = pick(row, ["Received By", "Received by", "received_by"]);
+    base.buyerName = pick(row, ["Buyer Name", "Buyer", "Purchaser", "buyer_name"]);
+    base.buyerEmail = pick(row, ["Buyer Email", "Purchaser Email", "buyer_email"]);
+
+    if (request) {
+      base.requisitioner = pick(request, ["Requisitioner", "Requisitioner Name", "requisitioner"]);
+      base.requisitionerEmail = pick(request, ["Requisitioner Email", "Employee Email", "Email", "requisitioner_email"]);
+      base.department = pick(request, ["Department", "department"]);
+      base.purpose = pick(request, ["Purpose", "purpose"]);
+      base.prfNumber = pick(request, ["PRF/SRF No.", "PRF No.", "PRF No", "PRF Number", "PRF #", "PRF", "prf_srf_no"]);
+    }
+
+    const itemRowsForPo = itemsByPo.get(normalize(poNumber)) || [];
+    if (!itemRowsForPo.length) {
+      base.itemsDelivered = pick(row, ["Items Delivered", "Item/s Delivered", "Items", "Item Description", "Particulars", "description"]);
+      base.quantity = pickNumber(row, ["Qty", "Quantity", "qty"]);
+      base.unit = pick(row, ["Unit", "UOM"]);
+      base.unitPrice = pickNumber(row, ["Unit Price", "Price", "unit_price"]);
+      base.lineTotal = pickNumber(row, ["Total Amount", "Line Total", "Amount", "total"]);
+      base.itemDiscountPct = pickNumber(row, ["Disc %", "Discount %", "Item Discount %", "item_discount_pct"]);
+      mergeInto(output, base);
+      continue;
+    }
+
+    itemRowsForPo.forEach((itemRow) => {
+      const line = { ...base };
+      line.itemsDelivered = pick(itemRow, ["Description", "Item Description", "Items Delivered", "Item/s Delivered", "Particulars", "Particular", "description"]);
+      line.quantity = pickNumber(itemRow, ["Qty", "Quantity", "qty"]);
+      line.unit = pick(itemRow, ["Unit", "UOM"]);
+      line.unitPrice = pickNumber(itemRow, ["Unit Price", "Price", "unit_price"]);
+      line.itemDiscountPct = pickNumber(itemRow, ["Item Discount %", "Disc %", "Discount %", "item_discount_pct"]);
+      line.lineTotal = pickNumber(itemRow, ["Line Total", "Total Amount", "Amount", "line_total"]);
+      mergeInto(output, line);
+    });
+  }
+  return Array.from(output.values());
+}
+
+function mergePoRecordSources(...sources: PurchaseOrderRecord[][]): PurchaseOrderRecord[] {
+  const map = new Map<string, PurchaseOrderRecord>();
+  for (const source of sources) for (const record of source) for (const match of record.matches.length ? record.matches : [emptyMatch(record.poNumber)]) mergeInto(map, match);
+  return Array.from(map.values()).map((record) => ({
+    ...record,
+    matches: record.matches.length ? record.matches : [emptyMatch(record.poNumber)],
+  })).sort((a, b) => a.poNumber.localeCompare(b.poNumber, undefined, { numeric: true }));
 }
 
 function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
@@ -153,6 +316,7 @@ function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
     if (!prfNumber) continue;
     const record: PrfRecord = {
       prfNumber,
+      poNumber: pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "PO", "po_number"]),
       requisitioner: pick(row, ["REQUISITIONER", "Requisitioner Name", "Requisitioner"]),
       requisitionerEmail: pick(row, ["REQUISITIONER EMAIL", "Requisitioner Email", "Employee Email", "Email"]),
       department: pick(row, ["DEPARTMENT", "Department"]),
@@ -160,9 +324,30 @@ function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
       purpose: pick(row, ["PURPOSE", "PURPOSE ", "Purpose"]),
     };
     const key = normalize(prfNumber);
-    if (!map.has(key) || Object.values(map.get(key)!).filter(Boolean).length < Object.values(record).filter(Boolean).length) map.set(key, record);
+    const current = map.get(key);
+    if (!current || Object.values(current).filter(Boolean).length < Object.values(record).filter(Boolean).length) map.set(key, record);
   }
   return Array.from(map.values()).sort((a, b) => a.prfNumber.localeCompare(b.prfNumber, undefined, { numeric: true }));
+}
+
+function addPrfOnlyRecords(poRecords: PurchaseOrderRecord[], prfRecords: PrfRecord[]): PurchaseOrderRecord[] {
+  const map = new Map(poRecords.map((record) => [normalize(record.poNumber), record]));
+  for (const prf of prfRecords) {
+    const poNumber = clean(prf.poNumber);
+    if (!poNumber) continue;
+    const key = normalize(poNumber);
+    const current = map.get(key);
+    const match = emptyMatch(poNumber);
+    match.prfNumber = prf.prfNumber;
+    match.requisitioner = prf.requisitioner;
+    match.requisitionerEmail = prf.requisitionerEmail;
+    match.department = prf.department;
+    match.purpose = prf.purpose;
+    match.itemsDelivered = prf.itemDescription;
+    if (current) mergeInto(map, match);
+    else map.set(key, { poNumber, matches: [match] });
+  }
+  return Array.from(map.values()).sort((a, b) => a.poNumber.localeCompare(b.poNumber, undefined, { numeric: true }));
 }
 
 function buildRequisitionerContacts(rows: CsvRow[]): RequisitionerContact[] {
@@ -178,19 +363,50 @@ function buildRequisitionerContacts(rows: CsvRow[]): RequisitionerContact[] {
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+async function safeFetchCsv(sheetId: string, sheetName: string, explicitUrl?: string) {
+  try { return await fetchCsv(sheetId, sheetName, explicitUrl); } catch { return []; }
+}
+
 export async function GET() {
   const sheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
   const poSheet = process.env.GOOGLE_SUPPLIER_PO_SHEET || DEFAULT_PO_SHEET;
   const prfSheet = process.env.GOOGLE_SUPPLIER_PRF_SHEET || DEFAULT_PRF_SHEET;
   const employeeSheet = process.env.GOOGLE_SUPPLIER_EMPLOYEE_SHEET || DEFAULT_EMPLOYEE_SHEET;
+  const legacyPoSheet = process.env.GOOGLE_SUPPLIER_LEGACY_PO_SHEET || DEFAULT_LEGACY_PO_SHEET;
+  const legacyItemSheet = process.env.GOOGLE_SUPPLIER_LEGACY_ITEM_SHEET || DEFAULT_LEGACY_ITEM_SHEET;
+  const legacyRequestSheet = process.env.GOOGLE_SUPPLIER_LEGACY_REQUEST_SHEET || DEFAULT_LEGACY_REQUEST_SHEET;
   const poUrl = process.env.GOOGLE_SUPPLIER_PO_CSV_URL;
   const prfUrl = process.env.GOOGLE_SUPPLIER_PRF_CSV_URL;
   const employeeUrl = process.env.GOOGLE_SUPPLIER_EMPLOYEE_CSV_URL;
   try {
-    const [poRows, prfRows] = await Promise.all([fetchCsv(sheetId, poSheet, poUrl), fetchCsv(sheetId, prfSheet, prfUrl)]);
-    let employeeRows: CsvRow[] = [];
-    try { employeeRows = await fetchCsv(sheetId, employeeSheet, employeeUrl); } catch { employeeRows = []; }
-    return NextResponse.json({ ok: true, source: "google-sheets", fetchedAt: new Date().toISOString(), spreadsheetId: sheetId, poSheet, prfSheet, employeeSheet, poRecords: buildPoRecords(poRows), prfRecords: buildPrfRecords(prfRows), requisitioners: buildRequisitionerContacts(employeeRows) }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+    const [poRows, prfRows, legacyPoRows, legacyItemRows, legacyRequestRows] = await Promise.all([
+      fetchCsv(sheetId, poSheet, poUrl),
+      fetchCsv(sheetId, prfSheet, prfUrl),
+      safeFetchCsv(sheetId, legacyPoSheet),
+      safeFetchCsv(sheetId, legacyItemSheet),
+      safeFetchCsv(sheetId, legacyRequestSheet),
+    ]);
+    const employeeRows = await safeFetchCsv(sheetId, employeeSheet, employeeUrl);
+    const prfRecords = buildPrfRecords(prfRows);
+    const mergedFromSheets = mergePoRecordSources(
+      buildFlatPoRecords(poRows),
+      buildLegacyStructuredPoRecords(legacyPoRows, legacyItemRows, legacyRequestRows),
+    );
+    const completePoRecords = addPrfOnlyRecords(mergedFromSheets, prfRecords);
+    return NextResponse.json({
+      ok: true,
+      source: "google-sheets",
+      fetchedAt: new Date().toISOString(),
+      spreadsheetId: sheetId,
+      poSheet,
+      prfSheet,
+      employeeSheet,
+      legacySheets: { po: legacyPoSheet, items: legacyItemSheet, requests: legacyRequestSheet },
+      poRecords: completePoRecords,
+      prfRecords,
+      requisitioners: buildRequisitionerContacts(employeeRows),
+      sourceCounts: { poEvaluationRows: poRows.length, legacyPoRows: legacyPoRows.length, legacyItemRows: legacyItemRows.length, legacyRequestRows: legacyRequestRows.length, prfRows: prfRows.length },
+    }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (error) {
     return NextResponse.json({ ok: false, source: "google-sheets", message: error instanceof Error ? error.message : "Unable to read Google Sheets." }, { status: 503, headers: { "Cache-Control": "no-store, max-age=0" } });
   }

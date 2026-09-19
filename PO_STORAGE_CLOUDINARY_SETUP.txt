@@ -8,6 +8,8 @@ What changed
 - Requisitioner email is resolved automatically from the Employee Google Sheet by name before the email is sent.
 - The requisitioner page displays the stored official PO and all stored pages.
 - Delivery fields from the source sheet (expected date, actual delivery date, status, received by) are shown with the PO.
+- The lookup now reads both the visible PO/PRF sheets and the V2 Apps Script source-of-truth sheets (POs, Items, Requests), so older PO records can also appear in the evaluation queue.
+- PRF records that contain a PO number are linked back to that PO, so searching a PRF such as 106892 can surface its corresponding PO (for example PO33439) even when the PO was not present in the newer PO-for-Evaluation sheet.
 - Evaluation terminology remains aligned with the supplied Apps Script: Purchasing uses 5 criteria including compliance; Requisitioner and AMD use 4 criteria (delivery/quality, price, timeliness, after-sales).
 
 Cloudinary setup

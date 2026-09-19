@@ -20,3 +20,19 @@ NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
 NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET
 
 The upload preset must be an unsigned preset because this implementation uploads documents directly from the browser. Do not put a Cloudinary API secret in NEXT_PUBLIC variables.
+
+
+LATEST QUEUE COMPLETENESS FIX
+- The PO Storage / For Supplier Evaluation queue is now built from PO for Evaluation + PRF Details v2 + the V2 source-of-truth POs/Items/Requests sheets.
+- PRF records with a PO number are linked into the PO queue.
+- The 200-record client cap was removed so a valid older record is not hidden from search.
+- A PO is removed from For Supplier Evaluation only when an explicit requisitioner evaluation is submitted; a non-requisitioner/historical row with requisitionerAvg alone no longer hides the PO.
+- Example scenario fixed: PRF 106892 can surface PO33439 when that relationship exists in the V2 workbook.
+- Existing Cloudinary multi-page storage, Employee email auto-resolution, delivery fields, and role-based evaluation criteria remain in place.
+
+V2 WORKBOOK COMPLETENESS / QUEUE FIX
+- The PO lookup now merges records from PO for Evaluation, PRF Details v2, plus the Apps Script source-of-truth sheets POs, Items, and Requests.
+- PRF rows containing a PO number are linked into the PO queue, so a PRF search can surface its PO even when the PO was not duplicated into PO for Evaluation.
+- The previous client-side 200-record cap was removed from the PO Storage list so older records are not hidden from search.
+- A PO is considered completed for the For Supplier Evaluation queue only from an explicit requisitioner evaluation submission. Requisitioner average alone no longer hides a PO.
+- Example relationship supported: PRF 106892 -> PO33439, when that relationship exists in the V2 workbook.
