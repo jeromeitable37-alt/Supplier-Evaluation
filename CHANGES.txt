@@ -36,3 +36,13 @@ V2 WORKBOOK COMPLETENESS / QUEUE FIX
 - The previous client-side 200-record cap was removed from the PO Storage list so older records are not hidden from search.
 - A PO is considered completed for the For Supplier Evaluation queue only from an explicit requisitioner evaluation submission. Requisitioner average alone no longer hides a PO.
 - Example relationship supported: PRF 106892 -> PO33439, when that relationship exists in the V2 workbook.
+
+DUAL GOOGLE SHEET SOURCE FIX
+- The system now treats the Supplier Evaluation workbook and the separate V2 PRF/SRF Monitoring workbook as two complementary sources instead of replacing one with the other.
+- Supplier Evaluation workbook remains the primary source for PO for Evaluation, PRF Details v2, requisitioner contacts, and existing evaluation data.
+- V2 PRF/SRF workbook is read through its business-unit PRF tabs and contributes PO NUMBER, PRF, requisitioner, department, item, purpose, PO date, delivery date, actual delivery date, received-by, purchaser, and purchasing/PRF status fields.
+- PO records are cross-linked by PRF number, so a PO that exists only in the V2 monitoring workbook can still appear in PO Storage.
+- Verified from the supplied V2 workbook: PRF 106892 is on `PRF - SISC` and links to `PO33439`, with requisitioner `MARK PABUSTAN` and item `2 3D PRINTER P2S`.
+- Requisitioner email lookup now falls back to the `Requisitioner Details` sheet in the Supplier Evaluation workbook when an `Employee` sheet is unavailable.
+- `/api/send-evaluation` uses the same Employee/Requisitioner Details fallback when resolving the recipient.
+- New environment variables: GOOGLE_SUPPLIER_V2_SHEET_ID, GOOGLE_SUPPLIER_V2_PRF_SHEETS, GOOGLE_SUPPLIER_REQUISITIONER_SHEET.

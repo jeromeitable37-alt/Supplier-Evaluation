@@ -51,14 +51,43 @@ type PrfRecord = {
   department: string;
   itemDescription: string;
   purpose: string;
+  orderDate?: string;
+  expectedDate?: string;
+  actualDeliveryDate?: string;
+  receivedBy?: string;
+  status?: string;
+  buyerName?: string;
+  sourceSheet?: string;
 };
 
+type FetchResult = { rows: CsvRow[]; error?: string };
+
+// PRIMARY SOURCE: the Supplier Evaluation workbook.
 const DEFAULT_SHEET_ID = "1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA";
 const DEFAULT_PO_SHEET = "PO for Evaluation";
 const DEFAULT_PRF_SHEET = "PRF Details v2";
 const DEFAULT_EMPLOYEE_SHEET = "Employee";
+const DEFAULT_REQUISITIONER_SHEET = "Requisitioner Details";
 
-// Legacy/source-of-truth sheets used by Sir JC's Apps Script.
+// SECONDARY SOURCE: the separate V2 PRF/SRF monitoring workbook.
+const DEFAULT_V2_SHEET_ID = "1h4OvmGWLzhUf2A9xk8uOmeVQgrKV1Xug42n9LH77Avw";
+const DEFAULT_V2_PRF_SHEETS = [
+  "PRF - SISC",
+  "PRF-TROPICAL PALMS",
+  "PRF-SMIS",
+  "PRF-SSLC",
+  "PRF-TREX",
+  "PRF-ACT",
+  "PRF-ASAT",
+  "PRF-SGEN",
+  "PRF-SISFU",
+  "PRF-CMIP",
+  "PRF - AFSL",
+  "PRF-SVILLE EDUVISION",
+  "PRF-AASHPI",
+];
+
+// Optional historical/source-of-truth sheets retained for compatibility with the supplied Apps Script workflow.
 const DEFAULT_LEGACY_PO_SHEET = "POs";
 const DEFAULT_LEGACY_ITEM_SHEET = "Items";
 const DEFAULT_LEGACY_REQUEST_SHEET = "Requests";
@@ -122,6 +151,14 @@ async function fetchCsv(sheetId: string, sheetName: string, explicitUrl?: string
   return toObjects(text);
 }
 
+async function safeFetchCsv(sheetId: string, sheetName: string, explicitUrl?: string): Promise<FetchResult> {
+  try {
+    return { rows: await fetchCsv(sheetId, sheetName, explicitUrl) };
+  } catch (error) {
+    return { rows: [], error: error instanceof Error ? error.message : `Unable to read ${sheetName}.` };
+  }
+}
+
 function emptyMatch(poNumber: string): PurchaseOrderMatch {
   return {
     poNumber,
@@ -169,7 +206,6 @@ function mergeInto(map: Map<string, PurchaseOrderRecord>, match: PurchaseOrderMa
   );
   if (!existing) current.matches.push(match);
   else {
-    // Enrich the already-existing line with fields from another source without replacing real values.
     (Object.keys(match) as (keyof PurchaseOrderMatch)[]).forEach((field) => {
       const value = match[field];
       const currentValue = existing[field];
@@ -184,7 +220,7 @@ function buildFlatPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
   for (const row of rows) {
     const poNumber = pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "P.O. Number", "PO", "po_number"]);
     if (!poNumber) continue;
-    const match: PurchaseOrderMatch = {
+    mergeInto(grouped, {
       poNumber,
       prfNumber: pick(row, ["PRF Number", "PRF No", "PRF #", "PRF", "PRF No.", "prf_no", "prf_srf_no"]),
       itemsDelivered: pick(row, ["Items Delivered", "Item/s Delivered", "Items", "Item Description", "Particulars", "Particular", "description"]),
@@ -217,13 +253,9 @@ function buildFlatPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
       discountPct: pickNumber(row, ["Discount %", "Overall Discount %", "discount_pct"]),
       discountAmt: pickNumber(row, ["Discount Amount", "Discount Amt", "discount_amt"]),
       total: pickNumber(row, ["Grand Total", "PO Total", "Total", "Total Amount", "total"]),
-    };
-    mergeInto(grouped, match);
+    });
   }
-  return Array.from(grouped.values()).map((record) => ({
-    ...record,
-    matches: record.matches.length ? record.matches : [emptyMatch(record.poNumber)],
-  }));
+  return Array.from(grouped.values()).map((record) => ({ ...record, matches: record.matches.length ? record.matches : [emptyMatch(record.poNumber)] }));
 }
 
 function buildLegacyStructuredPoRecords(poRows: CsvRow[], itemRows: CsvRow[], requestRows: CsvRow[]): PurchaseOrderRecord[] {
@@ -300,28 +332,20 @@ function buildLegacyStructuredPoRecords(poRows: CsvRow[], itemRows: CsvRow[], re
   return Array.from(output.values());
 }
 
-function mergePoRecordSources(...sources: PurchaseOrderRecord[][]): PurchaseOrderRecord[] {
-  const map = new Map<string, PurchaseOrderRecord>();
-  for (const source of sources) for (const record of source) for (const match of record.matches.length ? record.matches : [emptyMatch(record.poNumber)]) mergeInto(map, match);
-  return Array.from(map.values()).map((record) => ({
-    ...record,
-    matches: record.matches.length ? record.matches : [emptyMatch(record.poNumber)],
-  })).sort((a, b) => a.poNumber.localeCompare(b.poNumber, undefined, { numeric: true }));
-}
-
-function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
+function buildPrfRecords(rows: CsvRow[], sourceSheet = "") : PrfRecord[] {
   const map = new Map<string, PrfRecord>();
   for (const row of rows) {
     const prfNumber = pick(row, ["PRF NO.", "PRF NO", "PRF Number", "PRF #", "PRF"]);
     if (!prfNumber) continue;
     const record: PrfRecord = {
       prfNumber,
-      poNumber: pick(row, ["PO Number", "PO No", "PO #", "Purchase Order", "PO", "po_number"]),
+      poNumber: pick(row, ["PO NUMBER", "PO Number", "PO No", "PO #", "Purchase Order", "PO", "po_number"]),
       requisitioner: pick(row, ["REQUISITIONER", "Requisitioner Name", "Requisitioner"]),
       requisitionerEmail: pick(row, ["REQUISITIONER EMAIL", "Requisitioner Email", "Employee Email", "Email"]),
       department: pick(row, ["DEPARTMENT", "Department"]),
       itemDescription: pick(row, ["ITEM DESCRIPTION", "Item Description", "Items Delivered", "Item/s Delivered"]),
       purpose: pick(row, ["PURPOSE", "PURPOSE ", "Purpose"]),
+      sourceSheet,
     };
     const key = normalize(prfNumber);
     const current = map.get(key);
@@ -330,13 +354,58 @@ function buildPrfRecords(rows: CsvRow[]): PrfRecord[] {
   return Array.from(map.values()).sort((a, b) => a.prfNumber.localeCompare(b.prfNumber, undefined, { numeric: true }));
 }
 
-function addPrfOnlyRecords(poRecords: PurchaseOrderRecord[], prfRecords: PrfRecord[]): PurchaseOrderRecord[] {
-  const map = new Map(poRecords.map((record) => [normalize(record.poNumber), record]));
+function buildV2PrfRecords(sheetName: string, rows: CsvRow[]): PrfRecord[] {
+  const result: PrfRecord[] = [];
+  for (const row of rows) {
+    const prfNumber = pick(row, ["PRF NO.", "PRF NO", "PRF Number", "PRF #", "PRF"]);
+    if (!prfNumber) continue;
+    result.push({
+      prfNumber,
+      poNumber: pick(row, ["PO NUMBER", "PO Number", "PO No", "PO #", "Purchase Order", "PO", "po_number"]),
+      requisitioner: pick(row, ["REQUISITIONER", "Requisitioner Name", "Requisitioner"]),
+      requisitionerEmail: pick(row, ["REQUISITIONER EMAIL", "Requisitioner Email", "Employee Email", "Email"]),
+      department: pick(row, ["DEPARTMENT", "Department"]),
+      itemDescription: pick(row, ["ITEM DESCRIPTION", "Item Description", "Items Delivered", "Item/s Delivered", "SCOPE OF WORK"]),
+      purpose: pick(row, ["PURPOSE", "PURPOSE ", "Purpose"]),
+      orderDate: pick(row, ["DATE OF PO", "PO DATE", "DATE PO", "Date of PO"]),
+      expectedDate: pick(row, ["DELIVERY DATE", "Delivery Date", "Expected Delivery", "Expected Date"]),
+      actualDeliveryDate: pick(row, ["ACTUAL DELIVERY DATE", "Actual Delivery Date", "Actual Delivery"]),
+      receivedBy: pick(row, ["DELIVERY RECEIVED BY", "DELIVERY RECEIVED BY ", "RECEIVED BY", "Received By"]),
+      status: pick(row, ["STATUS IN PURCHASING", "PO STATUS", "STATUS", "PRF STATUS"]) || "Pending",
+      buyerName: pick(row, ["PURCHASER ASSIGNED", "PURCHASER", "BUYER", "Purchaser Assigned"]),
+      sourceSheet: sheetName,
+    });
+  }
+  return result;
+}
+
+function mergePrfRecords(...sources: PrfRecord[][]): PrfRecord[] {
+  const map = new Map<string, PrfRecord>();
+  for (const source of sources) {
+    for (const record of source) {
+      const key = normalize(record.prfNumber);
+      if (!key) continue;
+      const current = map.get(key);
+      if (!current) {
+        map.set(key, { ...record });
+        continue;
+      }
+      (Object.keys(record) as (keyof PrfRecord)[]).forEach((field) => {
+        const value = record[field];
+        const existing = current[field];
+        if ((existing === "" || existing === undefined || existing === null) && value !== "") (current as any)[field] = value;
+      });
+      map.set(key, current);
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.prfNumber.localeCompare(b.prfNumber, undefined, { numeric: true }));
+}
+
+function buildV2PoRecords(prfRecords: PrfRecord[]): PurchaseOrderRecord[] {
+  const grouped = new Map<string, PurchaseOrderRecord>();
   for (const prf of prfRecords) {
     const poNumber = clean(prf.poNumber);
     if (!poNumber) continue;
-    const key = normalize(poNumber);
-    const current = map.get(key);
     const match = emptyMatch(poNumber);
     match.prfNumber = prf.prfNumber;
     match.requisitioner = prf.requisitioner;
@@ -344,17 +413,56 @@ function addPrfOnlyRecords(poRecords: PurchaseOrderRecord[], prfRecords: PrfReco
     match.department = prf.department;
     match.purpose = prf.purpose;
     match.itemsDelivered = prf.itemDescription;
-    if (current) mergeInto(map, match);
-    else map.set(key, { poNumber, matches: [match] });
+    match.orderDate = prf.orderDate || "";
+    match.expectedDate = prf.expectedDate || "";
+    match.actualDeliveryDate = prf.actualDeliveryDate || "";
+    match.receivedBy = prf.receivedBy || "";
+    match.status = prf.status || "Pending";
+    match.buyerName = prf.buyerName || "";
+    mergeInto(grouped, match);
   }
-  return Array.from(map.values()).sort((a, b) => a.poNumber.localeCompare(b.poNumber, undefined, { numeric: true }));
+  return Array.from(grouped.values());
+}
+
+function mergePoRecordSources(...sources: PurchaseOrderRecord[][]): PurchaseOrderRecord[] {
+  const map = new Map<string, PurchaseOrderRecord>();
+  for (const source of sources) for (const record of source) for (const match of record.matches.length ? record.matches : [emptyMatch(record.poNumber)]) mergeInto(map, match);
+  return Array.from(map.values()).map((record) => ({ ...record, matches: record.matches.length ? record.matches : [emptyMatch(record.poNumber)] }))
+    .sort((a, b) => a.poNumber.localeCompare(b.poNumber, undefined, { numeric: true }));
+}
+
+function enrichPoRecordsFromPrf(poRecords: PurchaseOrderRecord[], prfRecords: PrfRecord[]): PurchaseOrderRecord[] {
+  const poByPrf = new Map<string, PrfRecord>();
+  prfRecords.forEach((prf) => poByPrf.set(normalize(prf.prfNumber), prf));
+  return poRecords.map((record) => ({
+    ...record,
+    matches: record.matches.map((match) => {
+      const prf = poByPrf.get(normalize(match.prfNumber));
+      if (!prf) return match;
+      return {
+        ...match,
+        prfNumber: match.prfNumber || prf.prfNumber,
+        requisitioner: match.requisitioner || prf.requisitioner,
+        requisitionerEmail: match.requisitionerEmail || prf.requisitionerEmail,
+        department: match.department || prf.department,
+        purpose: match.purpose || prf.purpose,
+        itemsDelivered: match.itemsDelivered || prf.itemDescription,
+        orderDate: match.orderDate || prf.orderDate || "",
+        expectedDate: match.expectedDate || prf.expectedDate || "",
+        actualDeliveryDate: match.actualDeliveryDate || prf.actualDeliveryDate || "",
+        receivedBy: match.receivedBy || prf.receivedBy || "",
+        status: match.status && match.status !== "Pending" ? match.status : (prf.status || match.status || "Pending"),
+        buyerName: match.buyerName || prf.buyerName || "",
+      };
+    }),
+  }));
 }
 
 function buildRequisitionerContacts(rows: CsvRow[]): RequisitionerContact[] {
   const map = new Map<string, RequisitionerContact>();
   for (const row of rows) {
-    const name = pick(row, ["f_name", "full_name", "name", "employee name", "requisitioner", "requisitioner name"]);
-    const email = pick(row, ["email", "employee email", "requisitioner email"]);
+    const name = pick(row, ["f_name", "full_name", "name", "employee name", "requisitioner", "requisitioner name", "Full name"]);
+    const email = pick(row, ["email", "employee email", "requisitioner email", "Email Address [Required]"]);
     const department = pick(row, ["department"]);
     if (!name || !email || !email.includes("@")) continue;
     const key = name.toLowerCase().trim();
@@ -363,51 +471,103 @@ function buildRequisitionerContacts(rows: CsvRow[]): RequisitionerContact[] {
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function safeFetchCsv(sheetId: string, sheetName: string, explicitUrl?: string) {
-  try { return await fetchCsv(sheetId, sheetName, explicitUrl); } catch { return []; }
+function parseSheetList(value: string | undefined, fallback: string[]) {
+  const parsed = String(value || "").split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean);
+  return parsed.length ? parsed : fallback;
 }
 
 export async function GET() {
-  const sheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
+  const supplierSheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
   const poSheet = process.env.GOOGLE_SUPPLIER_PO_SHEET || DEFAULT_PO_SHEET;
   const prfSheet = process.env.GOOGLE_SUPPLIER_PRF_SHEET || DEFAULT_PRF_SHEET;
   const employeeSheet = process.env.GOOGLE_SUPPLIER_EMPLOYEE_SHEET || DEFAULT_EMPLOYEE_SHEET;
+  const requisitionerSheet = process.env.GOOGLE_SUPPLIER_REQUISITIONER_SHEET || DEFAULT_REQUISITIONER_SHEET;
+
+  const v2SheetId = process.env.GOOGLE_SUPPLIER_V2_SHEET_ID || DEFAULT_V2_SHEET_ID;
+  const v2PrfSheets = parseSheetList(process.env.GOOGLE_SUPPLIER_V2_PRF_SHEETS, DEFAULT_V2_PRF_SHEETS);
+
   const legacyPoSheet = process.env.GOOGLE_SUPPLIER_LEGACY_PO_SHEET || DEFAULT_LEGACY_PO_SHEET;
   const legacyItemSheet = process.env.GOOGLE_SUPPLIER_LEGACY_ITEM_SHEET || DEFAULT_LEGACY_ITEM_SHEET;
   const legacyRequestSheet = process.env.GOOGLE_SUPPLIER_LEGACY_REQUEST_SHEET || DEFAULT_LEGACY_REQUEST_SHEET;
   const poUrl = process.env.GOOGLE_SUPPLIER_PO_CSV_URL;
   const prfUrl = process.env.GOOGLE_SUPPLIER_PRF_CSV_URL;
   const employeeUrl = process.env.GOOGLE_SUPPLIER_EMPLOYEE_CSV_URL;
+
   try {
-    const [poRows, prfRows, legacyPoRows, legacyItemRows, legacyRequestRows] = await Promise.all([
-      fetchCsv(sheetId, poSheet, poUrl),
-      fetchCsv(sheetId, prfSheet, prfUrl),
-      safeFetchCsv(sheetId, legacyPoSheet),
-      safeFetchCsv(sheetId, legacyItemSheet),
-      safeFetchCsv(sheetId, legacyRequestSheet),
+    // Source #1: Supplier Evaluation workbook.
+    const [poRows, prfRows] = await Promise.all([
+      fetchCsv(supplierSheetId, poSheet, poUrl),
+      fetchCsv(supplierSheetId, prfSheet, prfUrl),
     ]);
-    const employeeRows = await safeFetchCsv(sheetId, employeeSheet, employeeUrl);
-    const prfRecords = buildPrfRecords(prfRows);
+
+    const [employeeResult, requisitionerResult, legacyPoResult, legacyItemResult, legacyRequestResult] = await Promise.all([
+      safeFetchCsv(supplierSheetId, employeeSheet, employeeUrl),
+      safeFetchCsv(supplierSheetId, requisitionerSheet),
+      safeFetchCsv(supplierSheetId, legacyPoSheet),
+      safeFetchCsv(supplierSheetId, legacyItemSheet),
+      safeFetchCsv(supplierSheetId, legacyRequestSheet),
+    ]);
+
+    // Source #2: V2 PRF/SRF workbook. Each business-unit PRF tab follows the same general structure.
+    const v2Results = await Promise.all(v2PrfSheets.map(async (sheetName) => ({
+      sheetName,
+      ...(await safeFetchCsv(v2SheetId, sheetName)),
+    })));
+
+    const supplierPrfRecords = buildPrfRecords(prfRows, prfSheet);
+    const v2PrfRecords = v2Results.flatMap((result) => buildV2PrfRecords(result.sheetName, result.rows));
+    const prfRecords = mergePrfRecords(supplierPrfRecords, v2PrfRecords);
+
     const mergedFromSheets = mergePoRecordSources(
       buildFlatPoRecords(poRows),
-      buildLegacyStructuredPoRecords(legacyPoRows, legacyItemRows, legacyRequestRows),
+      buildLegacyStructuredPoRecords(legacyPoResult.rows, legacyItemResult.rows, legacyRequestResult.rows),
+      buildV2PoRecords(v2PrfRecords),
     );
-    const completePoRecords = addPrfOnlyRecords(mergedFromSheets, prfRecords);
+    const completePoRecords = enrichPoRecordsFromPrf(mergedFromSheets, prfRecords);
+
+    const contacts = buildRequisitionerContacts([...employeeResult.rows, ...requisitionerResult.rows]);
+    const v2ReadableSheets = v2Results.filter((result) => !result.error && result.rows.length > 0).map((result) => result.sheetName);
+    const v2Errors = v2Results.filter((result) => result.error).map((result) => ({ sheet: result.sheetName, error: result.error }));
+
     return NextResponse.json({
       ok: true,
-      source: "google-sheets",
+      source: "google-sheets-dual-source",
       fetchedAt: new Date().toISOString(),
-      spreadsheetId: sheetId,
+      supplierSpreadsheetId: supplierSheetId,
+      v2SpreadsheetId: v2SheetId,
       poSheet,
       prfSheet,
       employeeSheet,
+      requisitionerSheet,
+      v2PrfSheets,
       legacySheets: { po: legacyPoSheet, items: legacyItemSheet, requests: legacyRequestSheet },
       poRecords: completePoRecords,
       prfRecords,
-      requisitioners: buildRequisitionerContacts(employeeRows),
-      sourceCounts: { poEvaluationRows: poRows.length, legacyPoRows: legacyPoRows.length, legacyItemRows: legacyItemRows.length, legacyRequestRows: legacyRequestRows.length, prfRows: prfRows.length },
+      requisitioners: contacts,
+      sourceCounts: {
+        supplierEvaluationPoRows: poRows.length,
+        supplierEvaluationPrfRows: prfRows.length,
+        employeeRows: employeeResult.rows.length,
+        requisitionerRows: requisitionerResult.rows.length,
+        legacyPoRows: legacyPoResult.rows.length,
+        legacyItemRows: legacyItemResult.rows.length,
+        legacyRequestRows: legacyRequestResult.rows.length,
+        v2PrfSheetsConfigured: v2PrfSheets.length,
+        v2PrfSheetsReadable: v2ReadableSheets.length,
+        v2PrfRows: v2PrfRecords.length,
+        v2LinkedPoRows: v2PrfRecords.filter((item) => Boolean(item.poNumber)).length,
+      },
+      sourceStatus: {
+        supplierEvaluation: "connected",
+        v2: v2ReadableSheets.length ? "connected" : "no-readable-v2-prf-sheets",
+        v2ReadableSheets,
+        v2Errors,
+      },
     }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (error) {
-    return NextResponse.json({ ok: false, source: "google-sheets", message: error instanceof Error ? error.message : "Unable to read Google Sheets." }, { status: 503, headers: { "Cache-Control": "no-store, max-age=0" } });
+    return NextResponse.json({ ok: false, source: "google-sheets-dual-source", message: error instanceof Error ? error.message : "Unable to read Google Sheets." }, {
+      status: 503,
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
   }
 }

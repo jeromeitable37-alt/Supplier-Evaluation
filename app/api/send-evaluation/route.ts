@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 const DEFAULT_SHEET_ID = "1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA";
 const DEFAULT_EMPLOYEE_SHEET = "Employee";
+const DEFAULT_REQUISITIONER_SHEET = "Requisitioner Details";
 
 type CsvRow = Record<string, string>;
 
@@ -39,16 +40,25 @@ function pick(row: CsvRow, names: string[]) {
   return "";
 }
 
-async function fetchEmployees(): Promise<CsvRow[]> {
-  const sheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
-  const sheetName = process.env.GOOGLE_SUPPLIER_EMPLOYEE_SHEET || DEFAULT_EMPLOYEE_SHEET;
-  const directUrl = process.env.GOOGLE_SUPPLIER_EMPLOYEE_CSV_URL;
+async function fetchSheet(sheetId: string, sheetName: string, directUrl?: string): Promise<CsvRow[]> {
   const url = directUrl || `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) return [];
   const text = await response.text();
   if (/^\s*<(!doctype|html|head|body)/i.test(text)) return [];
   return parseCsv(text);
+}
+
+async function fetchEmployees(): Promise<CsvRow[]> {
+  const sheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
+  const employeeSheet = process.env.GOOGLE_SUPPLIER_EMPLOYEE_SHEET || DEFAULT_EMPLOYEE_SHEET;
+  const requisitionerSheet = process.env.GOOGLE_SUPPLIER_REQUISITIONER_SHEET || DEFAULT_REQUISITIONER_SHEET;
+  const directUrl = process.env.GOOGLE_SUPPLIER_EMPLOYEE_CSV_URL;
+  const [employeeRows, requisitionerRows] = await Promise.all([
+    fetchSheet(sheetId, employeeSheet, directUrl).catch(() => []),
+    fetchSheet(sheetId, requisitionerSheet).catch(() => []),
+  ]);
+  return [...employeeRows, ...requisitionerRows];
 }
 
 async function resolveRequisitionerEmail(name: string, fallback?: string) {
@@ -81,7 +91,7 @@ export async function POST(request: Request) {
 
     const resolvedTo = await resolveRequisitionerEmail(requisitionerName || name || po.requisitioner, requisitionerEmail || po.requisitionerEmail || "");
     if (!resolvedTo || !resolvedTo.includes("@")) {
-      return NextResponse.json({ ok: false, message: `No email was found for requisitioner “${requisitionerName || name || po.requisitioner || ""}”. Check the Employee sheet.`, emailResolved: false }, { status: 400 });
+      return NextResponse.json({ ok: false, message: `No email was found for requisitioner “${requisitionerName || name || po.requisitioner || ""}”. Check the Employee or Requisitioner Details sheet.`, emailResolved: false }, { status: 400 });
     }
 
     const docs = Array.isArray(poDocuments) && poDocuments.length
