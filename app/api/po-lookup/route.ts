@@ -33,6 +33,9 @@ type PurchaseOrderMatch = {
   unitPrice: number | string;
   lineTotal: number | string;
   itemDiscountPct: number | string;
+  actualDeliveryDate: string;
+  receivedBy: string;
+  status: string;
 };
 
 type PurchaseOrderRecord = { poNumber: string; matches: PurchaseOrderMatch[] };
@@ -130,6 +133,9 @@ function buildPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
       unitPrice: pickNumber(row, ["Unit Price", "Price"]),
       lineTotal: pickNumber(row, ["Total Amount", "Line Total", "Amount"]),
       itemDiscountPct: pickNumber(row, ["Disc %", "Discount %", "Item Discount %"]),
+      actualDeliveryDate: pick(row, ["Actual Delivery Date", "Actual Delivery", "Delivery Received Date"]),
+      receivedBy: pick(row, ["Received By", "Received by", "Received"]),
+      status: pick(row, ["Status", "Delivery Status", "PO Status"]),
     };
     const key = normalize(poNumber);
     const list = grouped.get(key) || [];

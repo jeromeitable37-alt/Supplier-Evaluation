@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
-import { buildPurchaseOrderHtml } from "../../../components/PurchaseOrderGenerator";
 
 const labels = ["Poor", "Below Average", "Average", "Good", "Excellent"];
 const criteria = [
@@ -74,15 +73,16 @@ export default function EvaluationPage() {
   const po = link.po;
   const officialDocument = po.documentUrl || "";
   return <div className="public-eval-shell"><div className="public-eval-wrap">
-    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
+    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
     <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
+    <section className="public-delivery-strip"><div><span>Expected delivery</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Actual delivery</span><strong>{po.actualDeliveryDate || "—"}</strong></div><div><span>PO status</span><strong>{po.status || "Pending"}</strong></div><div><span>Received by</span><strong>{po.receivedBy || "—"}</strong></div></section>
 
     <section className="public-po-paper">
       <div className="public-po-paper-head"><b>{officialDocument ? "Official Purchase Order" : "Generated Purchase Order"}</b><span>{officialDocument ? "Stored transaction document" : "System template preview"}</span></div>
       {officialDocument ? <>
-        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The same official PO stored by the purchasing office is shown here for your evaluation.</small></div><a href={officialDocument} target="_blank" rel="noreferrer">Open / Download</a></div>
-        {isImage(po.documentMimeType) ? <img src={officialDocument} alt={`Official purchase order ${po.poNumber}`} className="public-official-image"/> : <iframe title={`Official purchase order ${po.poNumber}`} className="public-po-frame" src={officialDocument}/>} 
-      </> : <iframe title="Generated Purchase Order" className="public-po-frame" srcDoc={buildPurchaseOrderHtml(po, { name: link.workspaceName || "Southville International School and Colleges" })} />}
+        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The official PO stored by the Purchasing Office is shown here. Multiple PDF pages or uploaded page images are supported.</small></div><a href={officialDocument} target="_blank" rel="noreferrer">Open</a></div>
+        {(po.documentPages?.length ? po.documentPages : [{ url: officialDocument, name: po.documentName || `PO-${po.poNumber}`, mimeType: po.documentMimeType }]).map((doc, index) => <div className="public-official-page" key={`${doc.url}-${index}`}><div className="public-official-page-label">PAGE {index + 1}{po.documentPages?.length ? ` OF ${po.documentPages.length}` : ""}</div>{isImage(doc.mimeType) ? <img src={doc.url} alt={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-official-image"/> : <iframe title={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-po-frame" src={doc.url}/>}</div>)}
+      </> : <div className="public-generated-warning"><b>Official PO not attached yet</b><span>The purchasing office must store the official PO before this evaluation link is sent.</span></div>}
       <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
     </section>
 

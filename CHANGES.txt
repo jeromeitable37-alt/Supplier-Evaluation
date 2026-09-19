@@ -1,0 +1,22 @@
+PURCHASING SUPPLIER EVALUATION SYSTEM - PO STORAGE ENHANCEMENT
+
+This is an overlay patch. Copy/extract the files into the existing project root.
+It does NOT contain .git, node_modules, .next, or environment secrets.
+
+Main changes:
+1. PO Generator is now PO Storage in the visible UI.
+2. Official PO uploads go directly to Cloudinary.
+3. PDF POs can be multi-page. Multiple page images can also be selected together.
+4. Stored PO documents/pages are saved as metadata in Firestore and reused by the evaluation link/email.
+5. Resend uses the stored Cloudinary URL(s) as email attachments.
+6. Requisitioner email is auto-resolved from the Employee Google Sheet by name both in the UI and again on the server before sending.
+7. Expected delivery, actual delivery, PO status, and received-by fields are read from the PO sheet and shown in PO Storage and the requisitioner page.
+8. Role criteria remain aligned with the supplied Apps Script: Purchasing has 5 criteria including compliance; Requisitioner and AMD have 4 criteria.
+9. Search/form textbox visibility fixes are included.
+10. Cloudinary setup variables are added to .env.example.
+
+Required before upload works:
+NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET
+
+The upload preset must be an unsigned preset because this implementation uploads documents directly from the browser. Do not put a Cloudinary API secret in NEXT_PUBLIC variables.

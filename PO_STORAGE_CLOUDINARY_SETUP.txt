@@ -1,0 +1,23 @@
+PURCHASING SUPPLIER EVALUATION SYSTEM
+PO STORAGE ENHANCEMENT
+
+What changed
+- PO Generator is now presented as PO Storage. The official PO document is the source file for the requisitioner step.
+- New PO uploads go directly to Cloudinary instead of Firebase Storage. Existing Firebase document URLs remain readable for older records.
+- A single multi-page PDF is supported. You may also select multiple page images in one upload; all pages are stored with the PO and attached to the email.
+- Requisitioner email is resolved automatically from the Employee Google Sheet by name before the email is sent.
+- The requisitioner page displays the stored official PO and all stored pages.
+- Delivery fields from the source sheet (expected date, actual delivery date, status, received by) are shown with the PO.
+- Evaluation terminology remains aligned with the supplied Apps Script: Purchasing uses 5 criteria including compliance; Requisitioner and AMD use 4 criteria (delivery/quality, price, timeliness, after-sales).
+
+Cloudinary setup
+1. Create a Cloudinary product environment and note its Cloud Name.
+2. Create an Upload Preset configured for unsigned browser uploads.
+3. Put these in .env.local and the Vercel project Environment Variables:
+   NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=your-cloud-name
+   NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET=your-upload-preset
+4. Keep the preset restricted to the document types/size you need.
+5. Redeploy Vercel after adding the environment variables.
+
+Important
+Unsigned browser uploads expose the upload preset name to the client. Cloudinary documents recommend using signed uploads for stronger protection where appropriate.

@@ -358,6 +358,17 @@ export type PurchaseOrderLine = {
   lineTotal: number | string;
 };
 
+export type PurchaseOrderDocument = {
+  url: string;
+  publicId?: string;
+  resourceType?: string;
+  format?: string;
+  name: string;
+  mimeType?: string;
+  size?: number;
+  pages?: number;
+};
+
 export type PurchaseOrder = {
   id: string;
   poNumber: string;
@@ -398,6 +409,8 @@ export type PurchaseOrder = {
   documentUploadedAt?: string;
   documentUploadedBy?: string;
   documentSource?: string;
+  documentProvider?: "cloudinary" | "firebase";
+  documentPages?: PurchaseOrderDocument[];
 };
 
 export type PublicEvaluationLink = {

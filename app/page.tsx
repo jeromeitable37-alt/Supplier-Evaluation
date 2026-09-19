@@ -128,20 +128,20 @@ const criteria = {
     "Accurate Delivery / Quality",
     "Competitive Price",
     "Timeliness of Delivery",
-    "After Sales Service",
-    "Compliance / School Policies",
+    "After Sales Services",
+    "Compliance with Regulatory Requirements and School Policies",
   ],
   requisitioner: [
     "Accurate Delivery / Quality",
     "Competitive Price",
     "Timeliness of Delivery",
-    "After Sales Service",
+    "After Sales Services",
   ],
   amd: [
     "Accurate Delivery / Quality",
     "Competitive Price",
     "Timeliness of Delivery",
-    "After Sales Service",
+    "After Sales Services",
   ],
 };
 
@@ -570,7 +570,7 @@ export default function Home() {
       setAiBusy(false);
     }
   }
-  const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "purchase-orders" ? "PO Generator" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
+  const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "purchase-orders" ? "PO Storage" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
 
   if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><h1>Loading Purchasing Supplier Evaluation System</h1><p>Checking your secure Firebase session…</p></div></div>;
   if (!authUser) return <AuthScreen onSuccess={() => {}} />;
@@ -580,7 +580,7 @@ export default function Home() {
       <aside className={`sidebar ${sidebar ? "open" : "closed"}`}>
         <div className="brand">
           <div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div>
-          {sidebar && <div><strong>Purchasing Supplier</strong><span>Evaluation System</span></div>}
+          {sidebar && <div><strong>Supplier</strong><span>Evaluation Pro</span></div>}
         </div>
         <div className="workspace-chip">
           <span className="dot" />
@@ -590,7 +590,7 @@ export default function Home() {
           <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={page === "dashboard"} onClick={() => navigate("dashboard")} compact={!sidebar} />
           {hasPermission("scan_forms") && <NavItem icon={<ScanLine size={18} />} label="Scan & Extract" active={false} onClick={() => setScanOpen(true)} compact={!sidebar} accent />}
           <NavItem icon={<ClipboardList size={18} />} label="Evaluations" active={page === "evaluations"} onClick={() => navigate("evaluations")} compact={!sidebar} />
-          <NavItem icon={<FileText size={18} />} label="PO Generator" active={page === "purchase-orders"} onClick={() => navigate("purchase-orders")} compact={!sidebar} />
+          <NavItem icon={<FileText size={18} />} label="PO Storage" active={page === "purchase-orders"} onClick={() => navigate("purchase-orders")} compact={!sidebar} />
           <NavItem icon={<Building2 size={18} />} label="Suppliers" active={page === "suppliers"} onClick={() => navigate("suppliers")} compact={!sidebar} />
           <NavItem icon={<BarChart3 size={18} />} label="Reports & Ratings" active={page === "reports"} onClick={() => navigate("reports")} compact={!sidebar} />
           <NavItem icon={<Bot size={18} />} label="AI Support" active={aiOpen || page === "ai"} onClick={() => setAiOpen(true)} compact={!sidebar} />
@@ -613,7 +613,7 @@ export default function Home() {
             {hasPermission("import_excel") && <><button className="btn ghost" onClick={() => importRef.current?.click()}><Upload size={16} /> Import Excel</button><input ref={importRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files?.[0] && importExcel(e.target.files[0])} /></>}
             {hasPermission("export_excel") && <button className="btn secondary" onClick={() => exportExcel()}><Download size={16} /> Export</button>}
             {hasPermission("create_evaluations") && <button className="btn primary" onClick={openNewEvaluation}><Plus size={17} /> New Evaluation</button>}
-            {hasPermission("create_evaluations") && <button className="btn secondary" onClick={() => navigate("purchase-orders")}><FileText size={16} /> PO Generator</button>}
+            {hasPermission("create_evaluations") && <button className="btn secondary" onClick={() => navigate("purchase-orders")}><FileText size={16} /> PO Storage</button>}
           </div>
         </header>
 
