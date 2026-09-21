@@ -1,0 +1,15 @@
+Purchasing Supplier Evaluation System — Full AMD Evaluation Fix
+
+This archive contains the full project snapshot plus the requested AMD Personnel / Received by evaluator workflow and Firestore undefined-value fix.
+
+Included:
+- Existing full app files, data/seed files, SISC logo, PWA, AI/OCR routes, etc.
+- Dual Google Sheets source (Supplier Evaluation + V2 monitoring/source).
+- PO storage with Cloudinary multi-page official PO support.
+- Requisitioner + AMD Personnel separate evaluation links and separate saved results.
+- Employee/Requisitioner Details email auto-resolution and manual email override.
+- Same official Cloudinary PO documents attached to both evaluator emails.
+- Four criteria for requisitioner and AMD Personnel, no Compliance criterion.
+- Firestore sanitization against undefined field errors.
+
+Do not copy .git/node_modules/.next from your existing folder. This archive intentionally contains no .git directory and no secrets.

@@ -9,6 +9,5 @@ export default function PwaRegister() {
       console.warn("PWA service worker registration failed:", error);
     });
   }, []);
-
   return null;
 }
