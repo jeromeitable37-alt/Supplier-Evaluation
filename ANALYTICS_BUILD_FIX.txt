@@ -1,0 +1,8 @@
+Analytics build fix.
+
+Fixed AdvancedReports.tsx completion row typing: the computed completion records now expose `submitted` (used by the UI) instead of only `sub`.
+
+Apply by extracting this ZIP into the project and overwriting:
+components/AdvancedReports.tsx
+
+No ENV changes.

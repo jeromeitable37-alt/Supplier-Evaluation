@@ -34,6 +34,8 @@ import {
   PERMISSIONS,
 } from "../lib/firestore";
 import PurchaseOrderGenerator from "../components/PurchaseOrderGenerator";
+import AdvancedDashboard from "../components/AdvancedDashboard";
+import AdvancedReports from "../components/AdvancedReports";
 import {
   Activity,
   ChevronDown,
@@ -619,11 +621,11 @@ export default function Home() {
 
         <div className="page-content">
           {dbError && <div className="panel warning-panel firebase-warning"><AlertCircle size={18}/><div><b>Firebase connection needs setup</b><p>{dbError}</p><small>See the Firebase setup steps in the README included with this project.</small></div></div>}
-          {page === "dashboard" && <Dashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={openNewEvaluation} onView={(r) => setViewing(r)} onViewAll={() => navigate("evaluations")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
+          {page === "dashboard" && <AdvancedDashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={openNewEvaluation} onView={(r) => setViewing(r)} onViewAll={() => navigate("reports")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
           {page === "evaluations" && <Evaluations records={filtered} query={query} setQuery={setQuery} filterRecommendation={filterRecommendation} setFilterRecommendation={setFilterRecommendation} filterSupplier={filterSupplier} setFilterSupplier={setFilterSupplier} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} suppliers={suppliers} onEdit={setEditing} onView={setViewing} onDelete={removeEvaluation} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
           {page === "purchase-orders" && <PurchaseOrderGenerator workspaceName="Southville International School and Colleges" workspaceAddress={(settings as any).address || ""} workspaceEmail={(settings as any).email || ""} currentUser={authUser ? { uid: authUser.uid, email: authUser.email || "", displayName: userProfile?.displayName || authUser.displayName || "" } : null} canEdit={hasPermission("create_evaluations")} onNotify={notify} />}
           {page === "suppliers" && <Suppliers records={records} suppliers={suppliers} onViewSupplier={(supplier) => { setFilterSupplier(supplier); navigate("evaluations"); }} />}
-          {page === "reports" && <Reports records={records} monthly={monthly} />}
+          {page === "reports" && <AdvancedReports records={records} monthly={monthly} />}
           {page === "data" && (hasPermission("database_management") ? <DataCenter records={records} onImport={() => importRef.current?.click()} onExport={() => exportExcel()} onClear={clearAll} onRefresh={() => location.reload()} /> : <AccessDenied title="Data Center restricted" text="Your account does not have database management permission." />)}
           {page === "settings" && <SettingsView settings={settings} setSettings={setSettings} onClear={clearAll} theme={theme} setTheme={setTheme} user={authUser} accent={accent} setAccent={setAccent} profile={userProfile} onOpenProfile={() => navigate("profile")} />}
           {page === "profile" && userProfile && <ProfileView profile={userProfile} theme={theme} accent={accent} onAccent={setAccent} onTheme={setTheme} onSave={async (next) => { setProfileSaving(true); try { await saveUserProfile(next); await updateFirebaseProfile(next.displayName, next.photoURL); setUserProfile(next); setDbError(""); notify("Profile updated successfully."); } finally { setProfileSaving(false); } }} />}
