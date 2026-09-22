@@ -1,0 +1,33 @@
+PURCHASING + REQUISITIONER + AMD EMAIL PATCH
+
+This is a minimal patch for the current Purchasing-management-system.
+It keeps the existing design/layout and adds the evaluator dispatch only.
+
+What changes:
+- Purchasing / Buyer evaluation is automatically created/sent using order.buyerName (or preparedBy fallback).
+- Requisitioner evaluation continues using order.requisitioner and employee email lookup.
+- AMD Personnel evaluation uses order.receivedBy and employee email lookup; if receivedBy is already an email address, it is used directly.
+- Each evaluator gets a separate evaluation record/token.
+- Purchasing keeps the existing 5-criterion public evaluation flow including Compliance.
+- Requisitioner and AMD keep the existing 4-criterion public evaluation flow.
+- Missing one evaluator does not stop the other evaluators.
+- Email sending uses GOOGLE_APPS_SCRIPT_EMAIL_URL and GOOGLE_APPS_SCRIPT_SECRET.
+- Includes the known app/page.tsx mergeRecords TypeScript fix.
+
+HOW TO INSTALL
+1. Extract this ZIP into your existing project root. Do not delete your .git, .env.local, node_modules, or .next.
+2. In PowerShell, from the project root, run:
+   powershell -ExecutionPolicy Bypass -File .\APPLY_PATCH.ps1
+3. Build:
+   npm run build
+4. If build succeeds:
+   git add .
+   git commit -m "Add purchasing evaluator and Google Apps Script email workflow"
+   git push origin main
+
+VERCEL VARIABLES ALREADY SET BY USER
+- GOOGLE_APPS_SCRIPT_EMAIL_URL
+- GOOGLE_APPS_SCRIPT_SECRET
+- NEXT_PUBLIC_APP_URL
+
+No Resend DNS setup is required for this patch.
