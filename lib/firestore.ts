@@ -431,7 +431,7 @@ export type PurchaseOrder = {
   documentPages?: PurchaseOrderDocument[];
 };
 
-export type EvaluationRole = "requisitioner" | "amd_personnel";
+export type EvaluationRole = "requisitioner" | "amd_personnel" | "purchaser";
 
 export type PublicEvaluationLink = {
   token: string;
@@ -445,6 +445,8 @@ export type PublicEvaluationLink = {
   evaluatorEmail?: string;
   amdName?: string;
   amdEmail?: string;
+  buyerName?: string;
+  buyerEmail?: string;
   createdAt: string;
   submittedAt?: string;
 };
@@ -542,9 +544,9 @@ export async function createEvaluationLinkCloud(input: {
   await signInToFirebase();
   const token = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`.replace(/[^a-z0-9]/gi, "").slice(0, 32);
   const workspaceName = input.workspaceName || "Southville International School and Colleges";
-  const role: EvaluationRole = input.evaluatorRole === "amd_personnel" ? "amd_personnel" : "requisitioner";
-  const evaluatorName = input.evaluatorName || (role === "amd_personnel" ? input.po.receivedBy : (input.requisitionerName || input.po.requisitioner)) || (role === "amd_personnel" ? "AMD Personnel" : "Requisitioner");
-  const evaluatorEmail = input.evaluatorEmail || (role === "amd_personnel" ? input.amdEmail : input.requisitionerEmail) || "";
+  const role: EvaluationRole = input.evaluatorRole === "amd_personnel" ? "amd_personnel" : input.evaluatorRole === "purchaser" ? "purchaser" : "requisitioner";
+  const evaluatorName = input.evaluatorName || (role === "amd_personnel" ? input.po.receivedBy : role === "purchaser" ? input.po.buyerName : (input.requisitionerName || input.po.requisitioner)) || (role === "amd_personnel" ? "AMD Personnel" : role === "purchaser" ? "Purchasing / Buyer" : "Requisitioner");
+  const evaluatorEmail = input.evaluatorEmail || (role === "amd_personnel" ? input.amdEmail : role === "purchaser" ? input.po.buyerEmail : input.requisitionerEmail) || "";
   const link: PublicEvaluationLink = {
     token,
     status: "pending",
@@ -557,6 +559,8 @@ export async function createEvaluationLinkCloud(input: {
     evaluatorEmail,
     amdName: input.amdName || (role === "amd_personnel" ? evaluatorName : input.po.receivedBy || ""),
     amdEmail: input.amdEmail || (role === "amd_personnel" ? evaluatorEmail : ""),
+    buyerName: input.po.buyerName || (role === "purchaser" ? evaluatorName : ""),
+    buyerEmail: input.po.buyerEmail || (role === "purchaser" ? evaluatorEmail : ""),
     createdAt: new Date().toISOString(),
   };
   const payload = removeUndefined({
@@ -585,14 +589,26 @@ export async function createPublicRequisitionerEvaluation(input: {
   overall: number;
 }) {
   const firestore = requireDb();
-  const role: EvaluationRole = input.link.evaluatorRole === "amd_personnel" ? "amd_personnel" : "requisitioner";
+  const role: EvaluationRole =
+    input.link.evaluatorRole === "purchaser"
+      ? "purchaser"
+      : input.link.evaluatorRole === "amd_personnel"
+        ? "amd_personnel"
+        : "requisitioner";
   const evaluationId = `public-${input.token}`;
   const submittedAt = new Date().toISOString();
-  const scores = [
+  const fourScores = [
     input.scores.accurate_delivery || null,
     input.scores.competitive_price || null,
     input.scores.timeliness || null,
     input.scores.after_sales || null,
+  ];
+  const purchasingScores = [
+    input.scores.accurate_delivery || null,
+    input.scores.competitive_price || null,
+    input.scores.timeliness || null,
+    input.scores.after_sales || null,
+    input.scores.compliance || null,
   ];
   const row: Record<string, unknown> = {
     id: evaluationId,
@@ -603,20 +619,20 @@ export async function createPublicRequisitionerEvaluation(input: {
     supplier: input.link.po.vendorName || "",
     address: input.link.po.deliveryAddress || "",
     remarks: input.comments || "",
-    purchasing: [null, null, null, null, null],
-    requisitioner: role === "requisitioner" ? scores : [null, null, null, null],
-    amd: role === "amd_personnel" ? scores : [null, null, null, null],
-    purchasingAvg: 0,
+    purchasing: role === "purchaser" ? purchasingScores : [null, null, null, null, null],
+    requisitioner: role === "requisitioner" ? fourScores : [null, null, null, null],
+    amd: role === "amd_personnel" ? fourScores : [null, null, null, null],
+    purchasingAvg: role === "purchaser" ? input.overall : 0,
     requisitionerAvg: role === "requisitioner" ? input.overall : 0,
     amdAvg: role === "amd_personnel" ? input.overall : 0,
     finalRating: input.overall,
     recommendation: input.overall >= 4.5 ? "Strongly Recommended" : input.overall >= 4 ? "Recommended" : input.overall >= 3.5 ? "Acceptable" : input.overall >= 3 ? "Acceptable w/ some Reservation" : "Not Recommended",
     createdAt: submittedAt,
-    source: role === "amd_personnel" ? "AMD Personnel web evaluation" : "Requisitioner web evaluation",
+    source: role === "purchaser" ? "Purchasing web evaluation" : role === "amd_personnel" ? "AMD Personnel web evaluation" : "Requisitioner web evaluation",
     publicToken: input.token,
     evaluatorRole: role,
-    evaluatorName: input.link.evaluatorName || (role === "amd_personnel" ? input.link.po.receivedBy : input.link.po.requisitioner) || "",
-    evaluatorEmail: input.link.evaluatorEmail || (role === "amd_personnel" ? input.link.amdEmail : input.link.requisitionerEmail) || "",
+    evaluatorName: input.link.evaluatorName || (role === "purchaser" ? input.link.po.buyerName : role === "amd_personnel" ? input.link.po.receivedBy : input.link.po.requisitioner) || "",
+    evaluatorEmail: input.link.evaluatorEmail || (role === "purchaser" ? input.link.po.buyerEmail : role === "amd_personnel" ? input.link.amdEmail : input.link.requisitionerEmail) || "",
     submittedAt,
     evaluationLinkId: input.token,
   };

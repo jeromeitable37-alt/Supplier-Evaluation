@@ -5,12 +5,19 @@ import { CheckCircle2, FileImage, FileText, Loader2, Star, XCircle } from "lucid
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
 
 const labels = ["Poor", "Below Average", "Average", "Good", "Excellent"];
-const criteria = [
+type EvaluationCriterion = readonly [string, string, string];
+
+const FOUR_CRITERIA: readonly EvaluationCriterion[] = [
   ["accurate_delivery", "Accurate Delivery / Quality", "Were the items delivered accurately and did they meet the expected quality or specifications?"],
   ["competitive_price", "Competitive Price", "Was the supplier's price reasonable and competitive based on the requested purchase?"],
   ["timeliness", "Timeliness of Delivery", "Was the delivery completed within the agreed delivery period?"],
   ["after_sales", "After Sales Services", "Did the supplier provide adequate support after delivery?"] ,
 ] as const;
+
+const PURCHASING_CRITERIA: readonly EvaluationCriterion[] = [
+  ...FOUR_CRITERIA,
+  ["compliance", "Compliance with Regulatory Requirements and School Policies", "Did the supplier comply with applicable regulatory requirements and school policies?"] as const,
+];
 
 function isImage(mime?: string) {
   return Boolean(mime && mime.startsWith("image/"));
@@ -43,21 +50,22 @@ export default function EvaluationPage() {
     })();
   }, [token]);
 
-  const overall = useMemo(() => {
-    const values = criteria.map(([id]) => scores[id]).filter((value) => value >= 1);
-    return values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10 : 0;
-  }, [scores]);
+  const evaluatorRole = link?.evaluatorRole === "purchaser" ? "purchaser" : link?.evaluatorRole === "amd_personnel" ? "amd_personnel" : "requisitioner";
+  const activeCriteria = evaluatorRole === "purchaser" ? PURCHASING_CRITERIA : FOUR_CRITERIA;
+  const evaluatorName = link?.evaluatorName || (evaluatorRole === "purchaser" ? link?.po.buyerName : evaluatorRole === "amd_personnel" ? link?.po.receivedBy : link?.requisitionerName) || (evaluatorRole === "purchaser" ? "Purchasing / Buyer" : evaluatorRole === "amd_personnel" ? "AMD Personnel" : "Requisitioner");
+  const evaluatorLabel = evaluatorRole === "purchaser" ? "Purchasing / Buyer" : evaluatorRole === "amd_personnel" ? "AMD Personnel" : "Requisitioner";
 
-  const evaluatorRole = link?.evaluatorRole === "amd_personnel" ? "amd_personnel" : "requisitioner";
-  const evaluatorName = link?.evaluatorName || (evaluatorRole === "amd_personnel" ? link?.po.receivedBy : link?.requisitionerName) || (evaluatorRole === "amd_personnel" ? "AMD Personnel" : "Requisitioner");
-  const evaluatorLabel = evaluatorRole === "amd_personnel" ? "AMD Personnel" : "Requisitioner";
+  const overall = useMemo(() => {
+    const values = activeCriteria.map(([id]) => scores[id]).filter((value) => value >= 1);
+    return values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length * 10) / 10 : 0;
+  }, [scores, activeCriteria]);
 
   const submit = async () => {
     if (!link) return;
     setSubmitError("");
-    const missing = criteria.some(([id]) => !scores[id]);
+    const missing = activeCriteria.some(([id]) => !scores[id]);
     if (missing) {
-      setSubmitError("Please rate all four criteria before submitting.");
+      setSubmitError(`Please rate all ${activeCriteria.length} criteria before submitting.`);
       return;
     }
     setSubmitting(true);
@@ -77,7 +85,7 @@ export default function EvaluationPage() {
   const po = link.po;
   const officialDocument = po.documentUrl || "";
   return <div className="public-eval-shell"><div className="public-eval-wrap">
-    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>Requisitioner confirmation and supplier feedback</p></div></section>
+    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>{evaluatorLabel} confirmation and supplier feedback</p></div></section>
     <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
     <section className="public-delivery-strip"><div><span>Expected delivery</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Actual delivery</span><strong>{po.actualDeliveryDate || "—"}</strong></div><div><span>PO status</span><strong>{po.status || "Pending"}</strong></div><div><span>Received by</span><strong>{po.receivedBy || "—"}</strong></div></section>
 
@@ -90,7 +98,7 @@ export default function EvaluationPage() {
       <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: Php {Number(po.total || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
     </section>
 
-    {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p></section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span>PLEASE RATE THE DELIVERED PURCHASE</span></div><h2>{evaluatorLabel} supplier evaluation</h2><p>Please rate each criterion from 1 (Poor) to 5 (Excellent). Your responses are saved with this purchase transaction under your evaluator role.</p></section><section className="public-eval-criteria">{criteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}</div>)}</section><section className="public-comments"><label>Additional comments <span>(optional)</span><textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Please add any comments about the delivery, quality, or supplier service."/></label><div className="public-submit-row"><div><span>Current average</span><strong>{overall ? overall.toFixed(1) : "—"} / 5</strong></div><button className="btn primary" disabled={submitting} onClick={() => void submit()}>{submitting ? "Submitting…" : "Submit Evaluation"}</button></div>{submitError && <div className="public-eval-error">{submitError}</div>}</section></>}
+    {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p></section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span>PLEASE RATE THE DELIVERED PURCHASE</span></div><h2>{evaluatorLabel} supplier evaluation</h2><p>Please rate each criterion from 1 (Poor) to 5 (Excellent). Your responses are saved with this purchase transaction under your evaluator role.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}</div>)}</section><section className="public-comments"><label>Additional comments <span>(optional)</span><textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Please add any comments about the delivery, quality, or supplier service."/></label><div className="public-submit-row"><div><span>Current average</span><strong>{overall ? overall.toFixed(1) : "—"} / 5</strong></div><button className="btn primary" disabled={submitting} onClick={() => void submit()}>{submitting ? "Submitting…" : "Submit Evaluation"}</button></div>{submitError && <div className="public-eval-error">{submitError}</div>}</section></>}
     <footer className="public-eval-footer">This evaluation link is unique to the intended evaluator. One completed submission is allowed for this transaction.</footer>
   </div></div>;
 }
