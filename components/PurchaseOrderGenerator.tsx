@@ -276,7 +276,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const records = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const all = poRecords.filter((group) => {
+    return poRecords.filter((group) => {
       const key = normalizeKey(group.poNumber);
       const hasSubmitted = submittedByPo.has(key);
       if (queueOnly && hasSubmitted) return false;
@@ -284,8 +284,28 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       return [group.poNumber, ...group.matches.flatMap((m) => [m.prfNumber, m.supplier, m.itemsDelivered, m.requisitioner, m.department])]
         .join(" ").toLowerCase().includes(q);
     });
-    return all;
   }, [poRecords, query, queueOnly, submittedByPo]);
+
+  // The V2 monitoring sheet contains more PRF rows than the PO-for-evaluation sheet.
+  // Keep those PRF rows searchable even when they do not yet belong to a PO group.
+  const prfSearchResults = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as PrfRecord[];
+    return prfRecords.filter((item) =>
+      [item.prfNumber, item.requisitioner, item.email, item.department, item.itemDescription, item.purpose]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [prfRecords, query]);
+
+  const findPoGroupForPrf = (prfNumber: string) => {
+    const key = normalizeKey(prfNumber);
+    if (!key) return undefined;
+    return poRecords.find((group) =>
+      (group.matches || []).some((match) => normalizeKey(match.prfNumber) === key),
+    );
+  };
 
   function buildFromSheet(group: PurchaseOrderSheetRecord): PurchaseOrder {
     const matches = group.matches || [];
@@ -657,12 +677,14 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       <div className="po-evaluation-tabs"><button className={queueOnly ? "active" : ""} onClick={() => setQueueOnly(true)}>For Supplier Evaluation <span>{poRecords.filter((g) => !submittedByPo.has(normalizeKey(g.poNumber))).length}</span></button><button className={!queueOnly ? "active" : ""} onClick={() => setQueueOnly(false)}>All PO Records <span>{poRecords.length}</span></button></div>
 
       <div className="panel po-generator-panel">
-        <div className="po-generator-toolbar"><div className="search-box"><Search size={16}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search PO, PRF, supplier, requisitioner, item…"/></div><div className="result-count">{records.length.toLocaleString()} shown</div></div>
+        <div className="po-generator-toolbar"><div className="search-box"><Search size={16}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search PO, PRF, supplier, requisitioner, item…"/></div><div className="result-count">{records.length.toLocaleString()} PO shown{query.trim() ? ` · ${prfSearchResults.length.toLocaleString()} PRF matches` : ""}</div></div>
         <div className="table-wrap"><table><thead><tr><th>PO Number</th><th>PRF</th><th>Supplier</th><th>Requisitioner</th><th>Document</th><th>Evaluation</th><th /></tr></thead><tbody>{records.map((group) => { const first = group.matches[0] || {} as PurchaseOrderSheetMatch; const saved = savedByPo.get(normalizeKey(group.poNumber)); const hasDoc = Boolean(saved?.documentUrl || saved?.documentPages?.length); const pending = Boolean(
   getPendingLink(group.poNumber, "purchaser") ||
   getPendingLink(group.poNumber, "requisitioner") ||
   getPendingLink(group.poNumber, "amd_personnel")
-); const done = submittedByPo.has(normalizeKey(group.poNumber)); const status = displayStatus(done, pending, hasDoc); return <tr key={group.poNumber}><td><span className="mono">{group.poNumber}</span></td><td>{first.prfNumber || "—"}</td><td><b>{first.supplier || "—"}</b></td><td>{first.requisitioner || "—"}</td><td>{hasDoc ? <span className="badge badge-ready"><FileImage size={12}/> Stored</span> : <span className="badge badge-missing"><UploadCloud size={12}/> Upload needed</span>}</td><td><span className={`badge badge-${status.tone}`}>{status.label}</span></td><td><button className="icon-action po-generate-btn" disabled={!canEdit} onClick={() => selectRecord(group)} title="Open PO storage and evaluation"><Eye size={15}/> Open</button></td></tr>; })}{!records.length && <tr><td colSpan={7}><div className="empty"><div className="empty-icon">📋</div><div className="empty-title">No POs in this queue</div><div className="empty-sub">A PO leaves the evaluation queue automatically after a requisitioner evaluation is submitted.</div></div></td></tr>}</tbody></table></div>
+); const done = submittedByPo.has(normalizeKey(group.poNumber)); const status = displayStatus(done, pending, hasDoc); return <tr key={group.poNumber}><td><span className="mono">{group.poNumber}</span></td><td>{first.prfNumber || "—"}</td><td><b>{first.supplier || "—"}</b></td><td>{first.requisitioner || "—"}</td><td>{hasDoc ? <span className="badge badge-ready"><FileImage size={12}/> Stored</span> : <span className="badge badge-missing"><UploadCloud size={12}/> Upload needed</span>}</td><td><span className={`badge badge-${status.tone}`}>{status.label}</span></td><td><button className="icon-action po-generate-btn" disabled={!canEdit} onClick={() => selectRecord(group)} title="Open PO storage and evaluation"><Eye size={15}/> Open</button></td></tr>; })}{!records.length && !prfSearchResults.length && <tr><td colSpan={7}><div className="empty"><div className="empty-icon">📋</div><div className="empty-title">No PO or PRF records found</div><div className="empty-sub">The search checks both the PO-for-Evaluation records and all PRF records loaded from the V2 monitoring sheet.</div></div></td></tr>}{!records.length && prfSearchResults.length > 0 && <tr><td colSpan={7}><div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">No matching PO group</div><div className="empty-sub">Matching PRF records are listed below from the V2 monitoring sheet.</div></div></td></tr>}</tbody></table></div>
+
+        {query.trim() && prfSearchResults.length > 0 && <div className="panel" style={{ marginTop: 16, padding: 18 }}><div className="section-kicker">V2 PRF MONITORING RECORDS</div><h3 style={{ margin: "6px 0 4px" }}>PRF matches from the monitoring sheet</h3><p style={{ margin: 0, opacity: 0.75 }}>These rows are searchable even when the PRF has no matching PO group yet.</p><div className="table-wrap" style={{ marginTop: 12 }}><table><thead><tr><th>PRF</th><th>Requisitioner</th><th>Department</th><th>Item / Description</th><th>Purpose</th><th /></tr></thead><tbody>{prfSearchResults.slice(0, 100).map((prf) => { const poGroup = findPoGroupForPrf(prf.prfNumber); return <tr key={`prf-${prf.prfNumber}`}><td><span className="mono">{prf.prfNumber || "—"}</span></td><td><b>{prf.requisitioner || "—"}</b><small style={{ display: "block", opacity: 0.7 }}>{prf.email || "No email"}</small></td><td>{prf.department || "—"}</td><td>{prf.itemDescription || "—"}</td><td>{prf.purpose || "—"}</td><td>{poGroup ? <button className="icon-action po-generate-btn" disabled={!canEdit} onClick={() => selectRecord(poGroup)} title="Open matching PO"><Eye size={15}/> Open PO</button> : <span className="badge badge-missing">PRF only · no PO group yet</span>}</td></tr>; })}{prfSearchResults.length > 100 && <tr><td colSpan={6}><div style={{ padding: "10px 0", textAlign: "center", opacity: 0.7 }}>Showing first 100 PRF matches out of {prfSearchResults.length.toLocaleString()}.</div></td></tr>}</tbody></table></div></div>}
       </div>
 
       {previewOpen && selectedPo && <div className="modal-backdrop"><div className="po-generator-modal"><div className="po-generator-modal-head"><div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE {selectedPo.documentUrl ? "· OFFICIAL DOCUMENT STORED" : "· WAITING FOR OFFICIAL DOCUMENT"}</div><h2>{selectedPo.poNumber}</h2><p>{selectedPo.vendorName || "Supplier"} · PRF {selectedPo.prfNumber || "—"}</p></div><button className="icon-button" onClick={() => setPreviewOpen(false)}><X size={18}/></button></div><div className="po-generator-modal-body"><div className="po-preview-card">
