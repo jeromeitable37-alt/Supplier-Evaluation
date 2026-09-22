@@ -61,3 +61,14 @@ C. Enter evaluator names/emails and save the PO. The emails should appear in Ema
 D. Create/send evaluation links for Purchasing / Buyer, Requisitioner, and AMD. Each gets its own one-time link and the official Cloudinary PO attachment.
 E. Public evaluation: Purchasing shows 5 criteria; Requisitioner and AMD show 4.
 F. When an actual delivery date exists, Delivery lead time appears in the workflow/public evaluation and is stored with the evaluation.
+
+
+DESIGN + PRICE + PO EXTRACTION IMPROVEMENT
+- Currency parser accepts strings such as PHP/Php with commas instead of turning them into zero.
+- Uploaded official PDFs and images are sent to the Gemini PO extractor; multiple image pages may be inspected.
+- Gemini extraction includes pricing and delivery/receiving fields.
+- PO pricing source is labeled as supplier spreadsheet, uploaded PO, mixed, or manual.
+- Public evaluator pricing table uses consistent light styling and aligned currency columns.
+- PO Storage pricing inputs use explicit white/light styling to avoid dark-theme input conflicts.
+- Spreadsheet values remain preferred; uploaded PO extraction fills missing values and does not overwrite existing populated pricing.
+- No new environment variables are required.

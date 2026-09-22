@@ -22,13 +22,13 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { image } = body || {};
     const { mimeType, data } = parseDataUrl(image);
-    if (!/^image\/(jpeg|png|webp|heic|heif)$/i.test(mimeType)) {
-      return NextResponse.json({ ok: false, message: "Gemini PO extraction currently expects an image scan (JPG, PNG, WEBP, HEIC or HEIF)." }, { status: 400 });
+    if (!/^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/i.test(mimeType)) {
+      return NextResponse.json({ ok: false, message: "Gemini PO extraction expects a PDF or image scan (JPG, PNG, WEBP, HEIC or HEIF)." }, { status: 400 });
     }
-    if (data.length > 18_000_000) return NextResponse.json({ ok: false, message: "The scan is too large for inline Gemini processing. Compress the image first." }, { status: 413 });
+    if (data.length > 28_000_000) return NextResponse.json({ ok: false, message: "The PO document is too large for inline Gemini processing. Compress the scan first." }, { status: 413 });
 
     const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-    const prompt = `Read this purchase order scan and return ONLY valid JSON. Do not guess values that are not visible. Preserve the wording and spelling visible in the document. Use empty strings for missing text. Return this schema exactly:\n{\"poNumber\":\"\",\"supplier\":\"\",\"attention\":\"\",\"vendorPhone\":\"\",\"deliveryAddress\":\"\",\"orderDate\":\"\",\"expectedDate\":\"\",\"paymentTerms\":\"\",\"prfNumber\":\"\",\"requisitioner\":\"\",\"purpose\":\"\",\"buyerName\":\"\",\"items\":[{\"description\":\"\",\"unit\":\"\",\"qty\":\"\",\"unitPrice\":\"\",\"lineTotal\":\"\",\"itemDiscountPct\":\"\"}],\"subtotal\":\"\",\"discountPct\":\"\",\"discountAmt\":\"\",\"total\":\"\",\"notes\":\"\"}`;
+    const prompt = `Read this purchase order document (PDF or image) and return ONLY valid JSON. Do not guess values that are not visible. Preserve the wording and spelling visible in the document. Use empty strings for missing text. Extract all visible purchase details, especially pricing, delivery dates, actual delivery date, received-by person, and buyer. Return this schema exactly:\n{"poNumber":"","supplier":"","attention":"","vendorPhone":"","vendorEmail":"","vendorAddress":"","vendorCity":"","deliveryAddress":"","orderDate":"","expectedDate":"","actualDeliveryDate":"","paymentTerms":"","prfNumber":"","requisitioner":"","purpose":"","buyerName":"","receivedBy":"","status":"","items":[{"description":"","unit":"","qty":"","unitPrice":"","lineTotal":"","itemDiscountPct":""}],"subtotal":"","discountPct":"","discountAmt":"","total":"","notes":""}`;
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: "POST",

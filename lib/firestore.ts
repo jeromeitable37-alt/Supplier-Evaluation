@@ -417,6 +417,7 @@ export type PurchaseOrder = {
   actualDeliveryDate: string;
   receivedBy: string;
   deliveryLeadTimeDays?: number;
+  pricingSource?: "spreadsheet" | "uploaded-po" | "manual" | "mixed";
   createdAt: string;
   source: string;
   items: PurchaseOrderLine[];
