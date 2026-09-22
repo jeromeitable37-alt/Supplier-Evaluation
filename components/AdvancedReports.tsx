@@ -26,6 +26,22 @@ const avg=(xs:number[])=>xs.length?Math.round((xs.reduce((a,b)=>a+b,0)/xs.length
 const money=(v:number)=>`Php ${v.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const norm=(v:unknown)=>String(v||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 const fmtDate=(v:unknown)=>{const d=dateOf(v);return d?d.toLocaleDateString("en-PH",{year:"numeric",month:"short",day:"numeric"}):"—";};
+
+function totalForGroup(group: Group) {
+  const matches = Array.isArray(group.matches) ? group.matches : [];
+  const explicitTotals = matches.map((m) => n(m.total ?? m.grandTotal ?? m.approvedAmount ?? m.auditedAmount)).filter((v) => v > 0);
+  if (explicitTotals.length) {
+    const uniqueTotals = Array.from(new Set(explicitTotals.map((v) => Math.round(v * 100) / 100)));
+    return uniqueTotals.length === 1 ? uniqueTotals[0] : uniqueTotals.reduce((a, b) => a + b, 0);
+  }
+  const lineTotals = matches.reduce((sum, m) => sum + n(m.lineTotal), 0);
+  if (lineTotals > 0) return lineTotals;
+  return matches.reduce((sum, m) => {
+    const qty = n(m.quantity);
+    const unitPrice = n(m.unitPrice);
+    return sum + (qty > 0 && unitPrice > 0 ? qty * unitPrice : 0);
+  }, 0);
+}
 function currentAYs(){const now=new Date();const start=now.getMonth()>=6?now.getFullYear():now.getFullYear()-1;return Array.from({length:5},(_,i)=>`AY ${start-i}–${start-i+1}`);}
 
 function BarChart({ data, moneyValues=false, maxItems=24 }: { data:{label:string;value:number}[]; moneyValues?:boolean; maxItems?:number }) {
@@ -57,7 +73,7 @@ export default function AdvancedReports({ records }: { records: Evaluation[]; mo
   const participation=useMemo(()=>ayLabels.map(ay=>{const rows=links.filter(l=>ayOf(l.createdAt)===ay);const roles:any={purchaser:[0,0],requisitioner:[0,0],amd_personnel:[0,0]};rows.forEach(l=>{const role=l.evaluatorRole||"requisitioner";if(roles[role]){roles[role][0]++;if(l.status==="submitted")roles[role][1]++;}});return{ay,roles};}),[links,ayLabels]);
   const completion=useMemo(()=>scorecard.map(v=>{const sent=links.filter(l=>String(l.po?.vendorName||"")===v.vendor).length;const sub=links.filter(l=>String(l.po?.vendorName||"")===v.vendor&&l.status==="submitted").length;return{vendor:v.vendor,sent,submitted:sub,rate:sent?Math.round(sub/sent*100):0};}).sort((a,b)=>b.rate-a.rate),[scorecard,links]);
 
-  const poRows=useMemo(()=>groups.map(g=>{const m=(g.matches||[])[0]||{};return{po:g.poNumber,supplier:String(m.supplier||""),total:n(m.total||m.grandTotal),status:String(m.status||"Pending"),orderDate:m.orderDate||"",expectedDate:m.expectedDate||"",actualDate:m.actualDeliveryDate||"",prf:m.prfNumber||"",requisitioner:m.requisitioner||""};}),[groups]);
+  const poRows=useMemo(()=>groups.map(g=>{const m=(g.matches||[])[0]||{};return{po:g.poNumber,supplier:String(m.supplier||""),total:totalForGroup(g),status:String(m.status||"Pending"),orderDate:m.orderDate||"",expectedDate:m.expectedDate||"",actualDate:m.actualDeliveryDate||"",prf:m.prfNumber||"",requisitioner:m.requisitioner||""};}),[groups]);
   const poStats=useMemo(()=>{let spend=0;const status:any={Pending:0,"Partial Delivery":0,Delivered:0};const overdue:any={};const lead:any={};for(const p of poRows){spend+=p.total;const s=p.status.toLowerCase();if(s.includes("partial"))status["Partial Delivery"]++;else if(s.includes("delivered")||s==="done")status.Delivered++;else status.Pending++;const exp=dateOf(p.expectedDate);if(exp){exp.setHours(0,0,0,0);const today=new Date();today.setHours(0,0,0,0);if(exp<today&&!s.includes("delivered")&&!s.includes("done")){const days=Math.floor((today.getTime()-exp.getTime())/86400000);overdue[p.supplier]=overdue[p.supplier]||[];overdue[p.supplier].push(days);}}const a=dateOf(p.orderDate),b=dateOf(p.actualDate);if(a&&b){const d=Math.round((b.getTime()-a.getTime())/86400000);if(d>=0&&d<365){lead[p.supplier]=lead[p.supplier]||[];lead[p.supplier].push(d);}}}const overdueRows=Object.entries(overdue).map(([vendor,arr])=>{const days=arr as number[];const avgDays=Math.round(days.reduce((a,b)=>a+b,0)/days.length);return{vendor,count:days.length,avgDays,severity:avgDays>30?"Critical":avgDays>14?"High":avgDays>7?"Medium":"Low"};}).sort((a,b)=>b.count-a.count||b.avgDays-a.avgDays);const leadRows=Object.entries(lead).map(([vendor,arr])=>{const days=arr as number[];const avgDays=Math.round(days.reduce((a,b)=>a+b,0)/days.length);return{vendor,days:avgDays,count:days.length,speed:avgDays<=7?"Fast":avgDays<=14?"Normal":avgDays<=30?"Slow":"Very Slow"};}).sort((a,b)=>a.days-b.days);return{spend,status,overdueRows,leadRows};},[poRows]);
   const spendMonthly=useMemo(()=>{const map:any={};poRows.forEach(p=>{const d=dateOf(p.orderDate);if(!d)return;const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;map[key]=(map[key]||0)+p.total;});return Object.keys(map).sort().map(k=>({label:k,value:map[k]}));},[poRows]);
   const spendAY=useMemo(()=>ayLabels.map(ay=>({label:ay,value:poRows.filter(p=>ayOf(p.orderDate)===ay).reduce((s,p)=>s+p.total,0)})),[poRows,ayLabels]);
@@ -80,7 +96,7 @@ export default function AdvancedReports({ records }: { records: Evaluation[]; mo
       <Metric icon={<CheckCircle2 size={18}/>} label="Total Evaluations" value={filteredEvals.length.toLocaleString()} meta="Submitted/rated records"/>
       <Metric icon={<BarChart3 size={18}/>} label="Average Score" value={currentScorecard.length?`${(currentScorecard.reduce((s,v)=>s+(v.overall||0),0)/currentScorecard.length).toFixed(2)} / 5`:"—"} meta={ayFilter==="all"?"All available AYs":ayFilter}/>
       <Metric icon={<Clock3 size={18}/>} label="Pending Responses" value={String((links.filter(l=>l.status!=="submitted").length)||0)} meta="Evaluation links awaiting submission"/>
-      <Metric icon={<DollarSign size={18}/>} label="Total PO Spend" value={money(poStats.spend)} meta="PO source data"/>
+      <Metric icon={<DollarSign size={18}/>} label="Total PO Spend" value={money(poStats.spend)} meta="PO / approved source value"/>
       <Metric icon={<Truck size={18}/>} label="Delivered POs" value={String(poStats.status.Delivered||0)} meta={`${poStats.leadRows.length} suppliers with lead-time data`}/>
     </section>
 

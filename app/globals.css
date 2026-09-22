@@ -155,3 +155,146 @@ html[data-theme="dark"] .po-suggestions{box-shadow:0 18px 50px rgba(0,0,0,.38)}
 .mini-bar-chart{display:flex;align-items:flex-end;gap:12px;height:240px;padding:12px 10px}.mini-bar-col{flex:1;height:220px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}.mini-bar-col>b{font-size:11px}.mini-bar-track{height:175px;width:34px;border-radius:9px;background:var(--surface3);display:flex;align-items:flex-end;overflow:hidden}.mini-bar-track i{display:block;width:100%;background:var(--accent,var(--indigo));border-radius:9px 9px 0 0}.mini-bar-col span{font-size:10px;color:var(--text3)}
 @media(max-width:1100px){.advanced-stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.analytics-completion-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.content-grid{grid-template-columns:1fr!important}}
 @media(max-width:700px){.advanced-stats-grid{grid-template-columns:1fr}.analytics-completion-grid{grid-template-columns:1fr}.analytics-controls>div{min-width:100%;}.analytics-rec-row{grid-template-columns:1fr}.criterion-vendor>span{width:110px}}
+
+/* =========================================================
+   FINAL UI CONSISTENCY + ANALYTICS POLISH
+   Keeps the existing SISC/green visual language, fixes the
+   workflow value overlap, native control styling, spacing,
+   headings and analytics variable aliases.
+========================================================= */
+:root{
+  --surface:var(--panel);
+  --surface2:var(--soft2);
+  --surface3:#e9efec;
+  --border:var(--line);
+  --text2:#44534b;
+  --text3:var(--muted);
+  --emerald:var(--green2);
+  --indigo:#6366f1;
+  --amber:#d97706;
+}
+
+html,body{background:var(--bg);color:var(--text)}
+
+input,select,textarea{color:var(--text)}
+select,
+.directory-select,
+.analytics-controls select{
+  appearance:auto;
+  background:var(--panel)!important;
+  color:var(--text)!important;
+  border:1px solid var(--line)!important;
+  border-radius:10px;
+  min-height:40px;
+  outline:none;
+}
+select:focus,
+.directory-select:focus,
+.analytics-controls select:focus{
+  border-color:color-mix(in srgb,var(--accent) 45%,var(--line))!important;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent);
+}
+select option{background:#fff;color:#14211a}
+
+.page-heading{align-items:flex-start;margin-bottom:20px}
+.page-heading h1{font-size:32px;line-height:1.08;margin:8px 0 7px}
+.page-heading p{font-size:12px;line-height:1.6;max-width:780px}
+.page-heading>div:first-child{min-width:0}
+.heading-badge{margin-top:4px;white-space:nowrap}
+
+.panel-head h2{font-size:16px;line-height:1.2}
+.panel-head p{font-size:10.5px;line-height:1.5;max-width:900px}
+.section-kicker{font-size:9px}
+
+.advanced-stats-grid{gap:16px;margin-top:18px;margin-bottom:18px}
+.advanced-stat{min-height:122px;padding:19px 18px}
+.advanced-stat .stat-copy{min-width:0}
+.advanced-stat .stat-copy span{font-size:10px}
+.advanced-stat .stat-copy strong{font-size:26px;letter-spacing:-.02em;white-space:nowrap}
+.advanced-stat .stat-copy small{font-size:9px;line-height:1.35}
+
+/* Fix the dashboard Evaluation Activity rows. */
+.workflow{grid-template-columns:20px minmax(0,1fr) auto;gap:12px;padding:14px 19px;align-items:center}
+.workflow-step{font-size:10px;line-height:1;color:#9aa49f;padding-top:0}
+.workflow b{display:block;font-size:11.5px;line-height:1.2}
+.workflow p{font-size:9.5px;line-height:1.4;margin:4px 0 0}
+.workflow>strong{font-family:Manrope,sans-serif;font-size:22px;line-height:1;font-weight:800;color:var(--text);text-align:right;min-width:54px;white-space:nowrap}
+.workflow-panel .panel-head{padding-bottom:13px}
+
+.table-wrap table{font-size:11.5px}
+.table-wrap th{font-size:8.5px}
+.table-wrap td{line-height:1.35}
+.table-wrap td>b{font-weight:700}
+
+.search-box{background:var(--panel);min-width:0}
+.search-box input{background:transparent!important;color:var(--text)!important;font-size:11px}
+.search-box input::placeholder{color:#98a39d;opacity:1}
+
+/* PO Storage / Email Directory shared toolbar controls */
+.po-generator-toolbar{min-height:64px}
+.po-generator-toolbar .search-box{height:42px}
+.po-generator-toolbar .search-box input{height:100%}
+.email-directory-page{max-width:1600px;margin:0 auto;padding:30px 32px 52px}
+.email-directory-page .page-heading{margin-bottom:18px}
+.email-directory-page .page-heading p{max-width:900px}
+.email-directory-toolbar{display:grid;grid-template-columns:minmax(300px,1fr) 220px auto;gap:12px;align-items:center;padding:14px 16px}
+.email-directory-toolbar .search-box{width:100%;max-width:none}
+.directory-select{width:100%;padding:0 12px;font-size:11px}
+.email-directory-toolbar .result-count{justify-self:end;font-size:10px;font-weight:700;color:var(--muted);white-space:nowrap}
+.email-directory-notice{padding:12px 15px;margin-bottom:14px;border-radius:12px;font-size:10.5px;display:flex;align-items:flex-start;gap:8px;border:1px solid var(--line)}
+.email-directory-notice.success{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
+.email-directory-notice.error{border-color:#fecdd3;background:#fff1f2;color:#9f1239}
+.email-directory-page .panel-head{padding:19px 20px 15px}
+.email-directory-page .table-wrap td{padding:13px 12px}
+.email-directory-page .table-wrap th{padding:12px}
+.email-directory-page .table-wrap a{color:var(--accent);text-decoration:none}
+.email-directory-page .table-wrap a:hover{text-decoration:underline}
+.email-directory-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.email-directory-role-list{display:grid;gap:8px;margin-top:10px}
+.email-directory-role-option{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--panel);cursor:pointer}
+.email-directory-role-option:hover{background:var(--soft2);border-color:color-mix(in srgb,var(--accent) 25%,var(--line))}
+.email-directory-role-option input{margin-top:2px;accent-color:var(--accent)}
+.email-directory-role-option b{font-size:10px}
+.email-directory-role-option small{display:block;font-size:8.5px;color:var(--muted);margin-top:3px;line-height:1.45}
+.email-directory-footnote{font-size:8.5px;color:var(--muted);line-height:1.5;max-width:600px}
+
+/* Advanced analytics controls/tables: same scale and surface as the app. */
+.analytics-controls{padding:14px 16px!important;gap:12px!important}
+.analytics-controls>div{min-width:210px}
+.analytics-controls span{font-size:9px!important;color:var(--muted)!important}
+.analytics-controls select{height:42px;padding:0 12px;font-size:11px}
+.analytics-table td,.analytics-table th{vertical-align:middle}
+.analytics-score{font-size:11px;min-width:60px;padding:5px 9px}
+.analytics-compare{background:var(--soft2)!important;border-color:var(--line)!important}
+.analytics-completion-card{background:var(--soft2)!important;border-color:var(--line)!important}
+.analytics-bars{background:var(--panel);border-top:1px solid var(--line);border-radius:0 0 12px 12px}
+
+/* Avoid large page overflow caused by long supplier names in analytics grids. */
+.analytics-compare>div:first-child,
+.analytics-completion-card>div:first-child{min-width:0}
+.analytics-compare b,
+.analytics-completion-card b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+
+@media(max-width:900px){
+  .page-content{padding-inline:20px}
+  .email-directory-page{padding-inline:20px}
+  .page-heading h1{font-size:28px}
+  .email-directory-toolbar{grid-template-columns:1fr 190px}
+  .email-directory-toolbar .result-count{grid-column:1/-1;justify-self:end}
+  .email-directory-form-grid{grid-template-columns:1fr}
+}
+@media(max-width:700px){
+  .page-content{padding:20px 12px 38px}
+  .email-directory-page{padding:20px 12px 38px}
+  .page-heading h1{font-size:26px}
+  .page-heading p{font-size:11px}
+  .page-heading>div:last-child{width:100%}
+  .page-heading>div:last-child .btn{flex:1}
+  .email-directory-toolbar{grid-template-columns:1fr}
+  .email-directory-toolbar .result-count{grid-column:auto;justify-self:end}
+  .workflow{grid-template-columns:16px minmax(0,1fr) auto;padding-inline:14px}
+  .workflow>strong{font-size:19px;min-width:48px}
+  .advanced-stat{min-height:108px}
+  .advanced-stat .stat-copy strong{font-size:23px}
+}
+

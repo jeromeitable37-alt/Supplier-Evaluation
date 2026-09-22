@@ -19,6 +19,22 @@ const ayOf = (v: unknown) => { const d = asDate(v); if (!d) return ""; const sy 
 const fmtMoney = (v: number) => `Php ${v.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (v: unknown) => { const d = asDate(v); return d ? d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" }) : "—"; };
 
+function totalForGroup(group: Group) {
+  const matches = Array.isArray(group.matches) ? group.matches : [];
+  const explicitTotals = matches.map((m) => n(m.total ?? m.grandTotal ?? m.approvedAmount ?? m.auditedAmount)).filter((v) => v > 0);
+  if (explicitTotals.length) {
+    const uniqueTotals = Array.from(new Set(explicitTotals.map((v) => Math.round(v * 100) / 100)));
+    return uniqueTotals.length === 1 ? uniqueTotals[0] : uniqueTotals.reduce((a, b) => a + b, 0);
+  }
+  const lineTotals = matches.reduce((sum, m) => sum + n(m.lineTotal), 0);
+  if (lineTotals > 0) return lineTotals;
+  return matches.reduce((sum, m) => {
+    const qty = n(m.quantity);
+    const unitPrice = n(m.unitPrice);
+    return sum + (qty > 0 && unitPrice > 0 ? qty * unitPrice : 0);
+  }, 0);
+}
+
 function Metric({ icon, label, value, meta }: { icon: React.ReactNode; label: string; value: string; meta?: string }) {
   return <div className="stat-card advanced-stat"><div className="stat-icon">{icon}</div><div className="stat-copy"><span>{label}</span><strong>{value}</strong>{meta && <small>{meta}</small>}</div><div className="stat-line" /></div>;
 }
@@ -50,7 +66,7 @@ export default function AdvancedDashboard({ stats, recent, monthly, onScan, onNe
 
   const pos = useMemo(() => groups.map((g) => {
     const first = (g.matches || [])[0] || {};
-    return { ...first, poNumber: g.poNumber, supplier: first.supplier || "", buyerName: first.buyerName || "", total: n(first.total || first.grandTotal), status: first.status || "Pending", expectedDate: first.expectedDate || "", actualDeliveryDate: first.actualDeliveryDate || "", orderDate: first.orderDate || "", prfNumber: first.prfNumber || "", requisitioner: first.requisitioner || "" };
+    return { ...first, poNumber: g.poNumber, supplier: first.supplier || "", buyerName: first.buyerName || "", total: totalForGroup(g), status: first.status || "Pending", expectedDate: first.expectedDate || "", actualDeliveryDate: first.actualDeliveryDate || "", orderDate: first.orderDate || "", prfNumber: first.prfNumber || "", requisitioner: first.requisitioner || "" };
   }), [groups]);
 
   const poStats = useMemo(() => {
@@ -82,7 +98,7 @@ export default function AdvancedDashboard({ stats, recent, monthly, onScan, onNe
 
     <section className="stats-grid advanced-stats-grid">
       <Metric icon={<FileText size={18}/>} label="Total POs" value={loading ? "…" : pos.length.toLocaleString()} meta="Live Google Sheet" />
-      <Metric icon={<DollarSign size={18}/>} label="Total PO Value" value={loading ? "…" : fmtMoney(poStats.totalValue)} meta="Current PO source" />
+      <Metric icon={<DollarSign size={18}/>} label="Total PO Value" value={loading ? "…" : fmtMoney(poStats.totalValue)} meta="PO / approved source value" />
       <Metric icon={<Users size={18}/>} label="Vendors" value={loading ? "…" : poStats.vendors.toLocaleString()} meta="Unique suppliers" />
       <Metric icon={<Clock3 size={18}/>} label="Pending" value={loading ? "…" : poStats.pending.toLocaleString()} meta="Not yet delivered" />
       <Metric icon={<Truck size={18}/>} label="Delivered" value={loading ? "…" : poStats.delivered.toLocaleString()} meta={`${poStats.avgLead ? `${poStats.avgLead} day avg lead` : "Lead time pending"}`} />

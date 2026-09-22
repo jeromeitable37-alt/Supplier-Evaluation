@@ -163,13 +163,13 @@ export default function EmailDirectoryPage() {
       </div>
     </div>
 
-    {notice && <div className="panel" style={{ padding: "12px 16px", marginBottom: 14, borderColor: "#a7f3d0", background: "#ecfdf5", color: "#065f46", display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={17}/>{notice}</div>}
-    {error && <div className="panel" style={{ padding: "12px 16px", marginBottom: 14, borderColor: "#fecdd3", background: "#fff1f2", color: "#9f1239" }}>{error}</div>}
+    {notice && <div className="email-directory-notice success"><CheckCircle2 size={17}/><span>{notice}</span></div>}
+    {error && <div className="email-directory-notice error"><span>{error}</span></div>}
 
     <div className="panel" style={{ marginBottom: 16 }}>
-      <div className="po-generator-toolbar" style={{ marginBottom: 0 }}>
+      <div className="email-directory-toolbar">
         <div className="search-box"><Search size={16}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email, department…"/></div>
-        <select className="inp" style={{ maxWidth: 210 }} value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)}>
+        <select className="directory-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)}>
           <option value="all">All evaluator roles</option>
           {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
         </select>
@@ -195,15 +195,15 @@ export default function EmailDirectoryPage() {
     {formOpen && <div className="modal-backdrop"><div className="detail-modal" style={{ maxWidth: 720 }}>
       <div className="detail-top"><div><div className="eyebrow"><span className="eyebrow-dot"/> EMAIL DIRECTORY</div><h2>{editing ? "Edit evaluator contact" : "Add evaluator contact"}</h2><p>This contact will be reused when a spreadsheet email is unavailable.</p></div><button className="icon-button" onClick={() => !saving && setFormOpen(false)}><X size={18}/></button></div>
       <div className="detail-body">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="email-directory-form-grid">
           <label className="field"><span>Full name</span><input value={form.name} onChange={(e) => setForm((x) => ({ ...x, name: e.target.value }))} placeholder="Evaluator full name"/></label>
           <label className="field"><span>Email address</span><input type="email" value={form.email} onChange={(e) => setForm((x) => ({ ...x, email: e.target.value }))} placeholder="name@sgen.edu.ph"/></label>
           <label className="field"><span>Department</span><input value={form.department} onChange={(e) => setForm((x) => ({ ...x, department: e.target.value }))} placeholder="Purchasing / Department"/></label>
           <label className="field"><span>Notes</span><input value={form.notes} onChange={(e) => setForm((x) => ({ ...x, notes: e.target.value }))} placeholder="Optional note"/></label>
         </div>
-        <div style={{ marginTop: 18 }}><div className="section-kicker">APPLIES TO</div><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{roleOptions.map((role) => <label key={role.value} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 10, cursor: "pointer" }}><input type="checkbox" checked={form.roles.includes(role.value)} onChange={() => toggleRole(role.value)}/><span><b>{role.label}</b><small style={{ display: "block", opacity: .68 }}>{role.value === "purchaser" ? "Five-criterion Purchasing / Buyer evaluation" : "Four-criterion evaluator flow"}</small></span></label>)}</div></div>
+        <div style={{ marginTop: 18 }}><div className="section-kicker">APPLIES TO</div><div className="email-directory-role-list">{roleOptions.map((role) => <label key={role.value} className="email-directory-role-option"><input type="checkbox" checked={form.roles.includes(role.value)} onChange={() => toggleRole(role.value)}/><span><b>{role.label}</b><small>{role.value === "purchaser" ? "Five-criterion Purchasing / Buyer evaluation" : "Four-criterion evaluator flow"}</small></span></label>)}</div></div>
       </div>
-      <div className="detail-footer"><span style={{ opacity: .7 }}>Saved emails are fallback contacts; spreadsheet values are still preferred when available.</span><div><button className="btn secondary" onClick={() => setFormOpen(false)} disabled={saving}>Cancel</button><button className="btn primary" onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save contact"}</button></div></div>
+      <div className="detail-footer"><span className="email-directory-footnote">Saved emails are fallback contacts; spreadsheet values are still preferred when available.</span><div><button className="btn secondary" onClick={() => setFormOpen(false)} disabled={saving}>Cancel</button><button className="btn primary" onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save contact"}</button></div></div>
     </div></div>}
   </div>;
 }
