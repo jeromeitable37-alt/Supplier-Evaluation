@@ -17,6 +17,8 @@ import {
 import {
   createEvaluationLinkCloud,
   savePurchaseOrderCloud,
+  subscribeEvaluationContacts,
+  upsertEvaluationContactCloud,
   subscribeEvaluationLinks,
   subscribePurchaseOrderEvaluations,
   subscribePurchaseOrders,
@@ -24,6 +26,8 @@ import {
   type PurchaseOrder,
   type PurchaseOrderLine,
   type PublicEvaluationLink,
+  type EvaluationContact,
+  type EvaluationContactRole,
 } from "../lib/firestore";
 import { cloudinaryConfigured, getCloudinarySetupMessage, uploadPoDocumentToCloudinary, type CloudinaryPoDocument } from "../lib/cloudinary";
 
@@ -61,15 +65,25 @@ export type PurchaseOrderSheetMatch = {
 export type PurchaseOrderSheetRecord = {
   poNumber: string;
   matches: PurchaseOrderSheetMatch[];
+  prfOnly?: boolean;
 };
 
 type PrfRecord = {
   prfNumber: string;
+  poNumber?: string;
   requisitioner: string;
   email?: string;
+  requisitionerEmail?: string;
   department: string;
   itemDescription: string;
   purpose: string;
+  orderDate?: string;
+  expectedDate?: string;
+  actualDeliveryDate?: string;
+  receivedBy?: string;
+  status?: string;
+  buyerName?: string;
+  sourceSheet?: string;
 };
 
 type Props = {
@@ -99,6 +113,14 @@ const fmtDate = (value?: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
+};
+
+const calculateDeliveryLeadTime = (orderDate?: string, actualDeliveryDate?: string) => {
+  if (!orderDate || !actualDeliveryDate) return null;
+  const start = new Date(orderDate);
+  const end = new Date(actualDeliveryDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
 };
 
 function numberToWords(value: number) {
@@ -189,6 +211,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const [liveError, setLiveError] = useState("");
   const [fetchedAt, setFetchedAt] = useState("");
   const [query, setQuery] = useState("");
+  const [queuePage, setQueuePage] = useState(1);
+  const queuePageSize = 50;
   const [queueOnly, setQueueOnly] = useState(true);
   const [selectedPo, setSelectedPo] = useState<PurchaseOrder | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -200,11 +224,13 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const [requisitioners, setRequisitioners] = useState<{ name: string; email: string; department?: string }[]>([]);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [poExtracting, setPoExtracting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [createdLinks, setCreatedLinks] = useState<{ purchaser?: string; requisitioner?: string; amd_personnel?: string }>({});
   const createdLink = createdLinks.requisitioner || createdLinks.amd_personnel || "";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [savedPOs, setSavedPOs] = useState<PurchaseOrder[]>([]);
+  const [evaluationContacts, setEvaluationContacts] = useState<EvaluationContact[]>([]);
   const [evaluationRows, setEvaluationRows] = useState<Record<string, unknown>[]>([]);
   const [evaluationLinks, setEvaluationLinks] = useState<PublicEvaluationLink[]>([]);
 
@@ -219,7 +245,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       setPrfRecords(Array.isArray(data.prfRecords) ? data.prfRecords : []);
       setRequisitioners(Array.isArray(data.requisitioners) ? data.requisitioners : []);
       setFetchedAt(data.fetchedAt || new Date().toISOString());
-      onNotify(`Google Sheet synced · ${Array.isArray(data.poRecords) ? data.poRecords.length : 0} PO groups loaded.`);
+      onNotify(`Google Sheet synced · ${Array.isArray(data.poRecords) ? data.poRecords.length : 0} PO groups · ${Array.isArray(data.prfRecords) ? data.prfRecords.length : 0} PRF records loaded.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to sync the Google Sheet.";
       setLiveError(message);
@@ -235,17 +261,31 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const stopPos = subscribePurchaseOrders((items) => setSavedPOs(items), (e) => onNotify(e.message));
     const stopEvaluations = subscribePurchaseOrderEvaluations((items) => setEvaluationRows(items), (e) => onNotify(e.message));
     const stopLinks = subscribeEvaluationLinks((items) => setEvaluationLinks(items), (e) => onNotify(e.message));
+    const stopContacts = subscribeEvaluationContacts((items) => setEvaluationContacts(items), (e) => onNotify(e.message));
     return () => {
       window.clearInterval(timer);
       stopPos();
       stopEvaluations();
       stopLinks();
+      stopContacts();
     };
   }, []);
 
   const savedByPo = useMemo(() => {
     const map = new Map<string, PurchaseOrder>();
-    savedPOs.forEach((po) => map.set(normalizeKey(po.poNumber), po));
+    savedPOs.forEach((po) => {
+      const key = normalizeKey(po.poNumber);
+      if (key) map.set(key, po);
+    });
+    return map;
+  }, [savedPOs]);
+
+  const savedByPrf = useMemo(() => {
+    const map = new Map<string, PurchaseOrder>();
+    savedPOs.forEach((po) => {
+      const key = normalizeKey(po.prfNumber);
+      if (key) map.set(key, po);
+    });
     return map;
   }, [savedPOs]);
 
@@ -257,6 +297,18 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       const role = String(row.evaluatorRole || "").toLowerCase();
       const source = String(row.source || "").toLowerCase();
       if (role === "requisitioner" || source.includes("requisitioner web evaluation")) set.add(po);
+    });
+    return set;
+  }, [evaluationRows]);
+
+  const submittedByPrf = useMemo(() => {
+    const set = new Set<string>();
+    evaluationRows.forEach((row) => {
+      const prf = normalizeKey(row.prfNo);
+      if (!prf) return;
+      const role = String(row.evaluatorRole || "").toLowerCase();
+      const source = String(row.source || "").toLowerCase();
+      if (role === "requisitioner" || source.includes("requisitioner web evaluation")) set.add(prf);
     });
     return set;
   }, [evaluationRows]);
@@ -274,43 +326,86 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const getPendingLink = (poNumber: string, role: "purchaser" | "requisitioner" | "amd_personnel") =>
     pendingLinkByRole.get(`${normalizeKey(poNumber)}::${role}`);
 
+  const matchedPrfKeys = useMemo(() => {
+    const keys = new Set<string>();
+    poRecords.forEach((group) => (group.matches || []).forEach((match) => {
+      const key = normalizeKey(match.prfNumber);
+      if (key) keys.add(key);
+    }));
+    return keys;
+  }, [poRecords]);
+
+  const prfOnlyRecords = useMemo(() => {
+    return prfRecords.filter((item) => {
+      const key = normalizeKey(item.prfNumber);
+      return Boolean(key) && !matchedPrfKeys.has(key);
+    });
+  }, [prfRecords, matchedPrfKeys]);
+
+  const prfOnlyGroups = useMemo<PurchaseOrderSheetRecord[]>(() => {
+    return prfOnlyRecords
+      .filter((item) => !queueOnly || !submittedByPrf.has(normalizeKey(item.prfNumber)))
+      .map((item) => ({
+        poNumber: item.poNumber || "",
+        prfOnly: true,
+        matches: [{
+          poNumber: item.poNumber || "",
+          prfNumber: item.prfNumber,
+          itemsDelivered: item.itemDescription || "",
+          supplier: "",
+          requisitioner: item.requisitioner || "",
+          requisitionerEmail: item.requisitionerEmail || item.email || "",
+          department: item.department || "",
+          purpose: item.purpose || "",
+          orderDate: item.orderDate || "",
+          expectedDate: item.expectedDate || "",
+          actualDeliveryDate: item.actualDeliveryDate || "",
+          receivedBy: item.receivedBy || "",
+          status: item.status || "Pending",
+          buyerName: item.buyerName || "",
+        }],
+      }));
+  }, [prfOnlyRecords, queueOnly, submittedByPrf]);
+
+  useEffect(() => {
+    setQueuePage(1);
+  }, [query, queueOnly]);
+
   const records = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return poRecords.filter((group) => {
+    const poGroups = poRecords.filter((group) => {
       const key = normalizeKey(group.poNumber);
       const hasSubmitted = submittedByPo.has(key);
       if (queueOnly && hasSubmitted) return false;
       if (!q) return true;
-      return [group.poNumber, ...group.matches.flatMap((m) => [m.prfNumber, m.supplier, m.itemsDelivered, m.requisitioner, m.department])]
+      return [group.poNumber, ...group.matches.flatMap((m) => [m.prfNumber, m.supplier, m.itemsDelivered, m.requisitioner, m.department, m.purpose])]
         .join(" ").toLowerCase().includes(q);
     });
-  }, [poRecords, query, queueOnly, submittedByPo]);
 
-  // The V2 monitoring sheet contains more PRF rows than the PO-for-evaluation sheet.
-  // Keep those PRF rows searchable even when they do not yet belong to a PO group.
-  const prfSearchResults = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [] as PrfRecord[];
-    return prfRecords.filter((item) =>
-      [item.prfNumber, item.requisitioner, item.email, item.department, item.itemDescription, item.purpose]
-        .join(" ")
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [prfRecords, query]);
+    const prfGroups = prfOnlyGroups.filter((group) => {
+      if (!q) return true;
+      const match: PurchaseOrderSheetMatch = group.matches[0] || { poNumber: group.poNumber || "", prfNumber: "", itemsDelivered: "", supplier: "" };
+      return [group.poNumber, match.prfNumber, match.itemsDelivered, match.requisitioner, match.department, match.purpose, match.status]
+        .join(" ").toLowerCase().includes(q);
+    });
 
-  const findPoGroupForPrf = (prfNumber: string) => {
-    const key = normalizeKey(prfNumber);
-    if (!key) return undefined;
-    return poRecords.find((group) =>
-      (group.matches || []).some((match) => normalizeKey(match.prfNumber) === key),
-    );
-  };
+    return [...poGroups, ...prfGroups];
+  }, [poRecords, prfOnlyGroups, query, queueOnly, submittedByPo]);
+
+  const queuePageCount = Math.max(1, Math.ceil(records.length / queuePageSize));
+  const pagedRecords = useMemo(() => {
+    const safePage = Math.min(queuePage, queuePageCount);
+    const start = (safePage - 1) * queuePageSize;
+    return records.slice(start, start + queuePageSize);
+  }, [records, queuePage, queuePageCount]);
 
   function buildFromSheet(group: PurchaseOrderSheetRecord): PurchaseOrder {
     const matches = group.matches || [];
-    const first = matches.find((item) => item.supplier || item.prfNumber || item.itemsDelivered) || matches[0] || {};
-    const prf = prfRecords.find((p) => p.prfNumber && first.prfNumber && p.prfNumber.toLowerCase() === first.prfNumber.toLowerCase());
+    const first: PurchaseOrderSheetMatch = matches.find((item) => item.supplier || item.prfNumber || item.itemsDelivered) || matches[0] || { poNumber: group.poNumber || "", prfNumber: "", itemsDelivered: "", supplier: "" };
+    const prf = prfRecords.find((p) => p.prfNumber && first.prfNumber && normalizeKey(p.prfNumber) === normalizeKey(first.prfNumber));
+    const prfKey = normalizeKey(first.prfNumber || prf?.prfNumber || "");
+    const saved = savedByPo.get(normalizeKey(group.poNumber || "")) || savedByPrf.get(prfKey);
+    const effectivePoNumber = String(group.poNumber || saved?.poNumber || "").trim();
     const rows: PurchaseOrderLine[] = matches
       .filter((row) => row.itemsDelivered || row.unitPrice || row.quantity)
       .map((row, index) => {
@@ -334,14 +429,13 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const sheetTotal = amount((first as any).total);
     const subtotal = sheetSubtotal || calculatedSubtotal;
     const total = sheetTotal || calculatedTotal;
-    const id = `po-${String(group.poNumber).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-    const saved = savedByPo.get(normalizeKey(group.poNumber));
+    const id = saved?.id || (effectivePoNumber ? `po-${effectivePoNumber.replace(/[^a-zA-Z0-9_-]/g, "-")}` : `po-prf-${String(first.prfNumber || "unknown").replace(/[^a-zA-Z0-9_-]/g, "-")}`);
     return {
       id,
-      poNumber: group.poNumber,
+      poNumber: effectivePoNumber,
       prfNumber: first.prfNumber || prf?.prfNumber || saved?.prfNumber || "",
       requisitioner: first.requisitioner || prf?.requisitioner || saved?.requisitioner || "",
-      requisitionerEmail: first.requisitionerEmail || prf?.email || saved?.requisitionerEmail || "",
+      requisitionerEmail: first.requisitionerEmail || prf?.requisitionerEmail || prf?.email || saved?.requisitionerEmail || "",
       department: first.department || prf?.department || saved?.department || "",
       purpose: first.purpose || prf?.purpose || saved?.purpose || "",
       vendorName: first.supplier || saved?.vendorName || "",
@@ -351,22 +445,22 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       vendorAddress: first.vendorAddress || saved?.vendorAddress || "",
       vendorCity: first.vendorCity || saved?.vendorCity || "",
       deliveryAddress: first.deliveryAddress || saved?.deliveryAddress || "",
-      orderDate: first.orderDate || saved?.orderDate || new Date().toISOString().slice(0, 10),
-      expectedDate: first.expectedDate || saved?.expectedDate || "",
+      orderDate: first.orderDate || prf?.orderDate || saved?.orderDate || new Date().toISOString().slice(0, 10),
+      expectedDate: first.expectedDate || prf?.expectedDate || saved?.expectedDate || "",
       paymentTerms: first.paymentTerms || saved?.paymentTerms || "",
       notes: first.notes || saved?.notes || "",
       subtotal: saved?.subtotal ?? subtotal,
       discountPct: saved?.discountPct ?? amount((first as any).discountPct),
       discountAmt: saved?.discountAmt ?? amount((first as any).discountAmt),
       total: saved?.total ?? total,
-      buyerName: first.buyerName || saved?.buyerName || currentUser?.displayName || "",
+      buyerName: first.buyerName || prf?.buyerName || saved?.buyerName || currentUser?.displayName || "",
       buyerEmail: first.buyerEmail || saved?.buyerEmail || currentUser?.email || "",
       approverName: saved?.approverName || "",
-      actualDeliveryDate: first.actualDeliveryDate || saved?.actualDeliveryDate || "",
-      receivedBy: first.receivedBy || saved?.receivedBy || "",
-      status: first.status || saved?.status || "Pending",
+      actualDeliveryDate: first.actualDeliveryDate || prf?.actualDeliveryDate || saved?.actualDeliveryDate || "",
+      receivedBy: first.receivedBy || prf?.receivedBy || saved?.receivedBy || "",
+      status: first.status || prf?.status || saved?.status || "Pending",
       createdAt: saved?.createdAt || new Date().toISOString(),
-      source: saved?.source || "Google Sheet",
+      source: saved?.source || (group.prfOnly ? "V2 PRF Monitoring" : "Google Sheet"),
       items: saved?.items?.length ? saved.items : items,
       documentProvider: saved?.documentProvider,
       documentPages: saved?.documentPages,
@@ -378,11 +472,106 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       documentUploadedAt: saved?.documentUploadedAt,
       documentUploadedBy: saved?.documentUploadedBy,
       documentSource: saved?.documentSource,
+      deliveryLeadTimeDays: saved?.deliveryLeadTimeDays ?? calculateDeliveryLeadTime(first.orderDate || prf?.orderDate || saved?.orderDate, first.actualDeliveryDate || prf?.actualDeliveryDate || saved?.actualDeliveryDate) ?? undefined,
     };
   }
 
+  const buildFromPrf = (item: PrfRecord): PurchaseOrder => {
+    const saved = savedByPrf.get(normalizeKey(item.prfNumber));
+    const id = saved?.id || `po-prf-${String(item.prfNumber).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const firstSavedItem = saved?.items?.[0];
+    const items: PurchaseOrderLine[] = saved?.items?.length ? saved.items : [{
+      line: 1,
+      description: item.itemDescription || "",
+      unit: firstSavedItem?.unit || "pcs",
+      qty: firstSavedItem?.qty || "",
+      unitPrice: firstSavedItem?.unitPrice || "",
+      itemDiscountPct: firstSavedItem?.itemDiscountPct || 0,
+      lineTotal: firstSavedItem?.lineTotal || "",
+    }];
+
+    return {
+      id,
+      poNumber: saved?.poNumber || "",
+      prfNumber: item.prfNumber || saved?.prfNumber || "",
+      requisitioner: item.requisitioner || saved?.requisitioner || "",
+      requisitionerEmail: item.email || saved?.requisitionerEmail || "",
+      department: item.department || saved?.department || "",
+      purpose: item.purpose || saved?.purpose || "",
+      vendorName: saved?.vendorName || "",
+      vendorAttention: saved?.vendorAttention || "",
+      vendorPhone: saved?.vendorPhone || "",
+      vendorEmail: saved?.vendorEmail || "",
+      vendorAddress: saved?.vendorAddress || "",
+      vendorCity: saved?.vendorCity || "",
+      deliveryAddress: saved?.deliveryAddress || "",
+      orderDate: saved?.orderDate || new Date().toISOString().slice(0, 10),
+      expectedDate: saved?.expectedDate || "",
+      paymentTerms: saved?.paymentTerms || "",
+      notes: saved?.notes || "",
+      subtotal: saved?.subtotal || 0,
+      discountPct: saved?.discountPct || 0,
+      discountAmt: saved?.discountAmt || 0,
+      total: saved?.total || 0,
+      buyerName: saved?.buyerName || currentUser?.displayName || "",
+      buyerEmail: saved?.buyerEmail || currentUser?.email || "",
+      approverName: saved?.approverName || "",
+      actualDeliveryDate: saved?.actualDeliveryDate || "",
+      receivedBy: saved?.receivedBy || "",
+      status: saved?.status || "PRF only · PO not assigned",
+      createdAt: saved?.createdAt || new Date().toISOString(),
+      source: saved?.source || "V2 PRF Monitoring",
+      items,
+      documentProvider: saved?.documentProvider,
+      documentPages: saved?.documentPages,
+      documentUrl: saved?.documentUrl,
+      documentPath: saved?.documentPath,
+      documentName: saved?.documentName,
+      documentMimeType: saved?.documentMimeType,
+      documentSize: saved?.documentSize,
+      documentUploadedAt: saved?.documentUploadedAt,
+      documentUploadedBy: saved?.documentUploadedBy,
+      documentSource: saved?.documentSource,
+    };
+  };
+
+  const findDirectoryContact = (name: string, role?: EvaluationContactRole) => {
+    const key = normalizePerson(name);
+    if (!key) return undefined;
+    return evaluationContacts.find((contact) => normalizePerson(contact.name) === key && (!role || contact.roles.includes(role)))
+      || evaluationContacts.find((contact) => normalizePerson(contact.name) === key);
+  };
+
+  const allEvaluatorContacts = useMemo(() => {
+    const map = new Map<string, { name: string; email: string; department?: string }>();
+    evaluationContacts.forEach((item) => {
+      if (item?.name && item?.email) map.set(normalizePerson(item.name), { name: item.name, email: item.email, department: item.department });
+    });
+    requisitioners.forEach((item) => {
+      if (!item?.name || !item?.email) return;
+      const key = normalizePerson(item.name);
+      if (!map.has(key)) map.set(key, item);
+    });
+    poRecords.forEach((group) => (group.matches || []).forEach((item) => {
+      const name = item.requisitioner;
+      const email = item.requisitionerEmail;
+      if (!name || !email) return;
+      const key = normalizePerson(name);
+      if (!map.has(key)) map.set(key, { name, email, department: item.department });
+    }));
+    prfRecords.forEach((item) => {
+      const name = item.requisitioner;
+      const email = item.requisitionerEmail || item.email;
+      if (!name || !email) return;
+      const key = normalizePerson(name);
+      if (!map.has(key)) map.set(key, { name, email, department: item.department });
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [evaluationContacts, requisitioners, poRecords, prfRecords]);
+
   const requisitionerContacts = useMemo(() => {
     const map = new Map<string, { name: string; email: string; department?: string }>();
+    // Sheet sources are authoritative when present; saved directory is fallback.
     requisitioners.forEach((item) => {
       if (!item?.name || !item?.email) return;
       map.set(normalizePerson(item.name), item);
@@ -393,12 +582,18 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       if (!map.has(key)) map.set(key, { name: item.requisitioner, email: item.requisitionerEmail, department: item.department });
     }));
     prfRecords.forEach((item) => {
-      if (!item.requisitioner || !item.email) return;
+      const email = item.requisitionerEmail || item.email;
+      if (!item.requisitioner || !email) return;
       const key = normalizePerson(item.requisitioner);
-      if (!map.has(key)) map.set(key, { name: item.requisitioner, email: item.email, department: item.department });
+      if (!map.has(key)) map.set(key, { name: item.requisitioner, email, department: item.department });
+    });
+    evaluationContacts.forEach((item) => {
+      if (!item?.name || !item?.email) return;
+      const key = normalizePerson(item.name);
+      if (!map.has(key)) map.set(key, { name: item.name, email: item.email, department: item.department });
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [requisitioners, poRecords, prfRecords]);
+  }, [requisitioners, poRecords, prfRecords, evaluationContacts]);
 
   const requisitionerSuggestions = useMemo(() => {
     const q = normalizePerson(selectedPo?.requisitioner || "");
@@ -415,20 +610,60 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const selectRecord = (group: PurchaseOrderSheetRecord) => {
     const po = buildFromSheet(group);
-    const pendingPurchaser = getPendingLink(po.poNumber, "purchaser");
-    const pendingReq = getPendingLink(po.poNumber, "requisitioner");
-    const pendingAmd = getPendingLink(po.poNumber, "amd_personnel");
-    const amdMatch = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(po.receivedBy));
+    const pendingPurchaser = po.poNumber ? getPendingLink(po.poNumber, "purchaser") : undefined;
+    const pendingReq = po.poNumber ? getPendingLink(po.poNumber, "requisitioner") : undefined;
+    const pendingAmd = po.poNumber ? getPendingLink(po.poNumber, "amd_personnel") : undefined;
+    const amdMatch = allEvaluatorContacts.find((item) => normalizePerson(item.name) === normalizePerson(po.receivedBy));
+    const reqDirectory = findDirectoryContact(po.requisitioner, "requisitioner");
+    const buyerDirectory = findDirectoryContact(po.buyerName, "purchaser");
     setSelectedPo(po);
-    setBuyerEmail(pendingPurchaser?.evaluatorEmail || pendingPurchaser?.buyerEmail || po.buyerEmail || "");
-    setRequisitionerEmail(pendingReq?.evaluatorEmail || pendingReq?.requisitionerEmail || po.requisitionerEmail || "");
-    setAmdEmail(pendingAmd?.evaluatorEmail || pendingAmd?.amdEmail || amdMatch?.email || "");
+    setBuyerEmail(pendingPurchaser?.evaluatorEmail || pendingPurchaser?.buyerEmail || po.buyerEmail || buyerDirectory?.email || "");
+    setRequisitionerEmail(pendingReq?.evaluatorEmail || pendingReq?.requisitionerEmail || po.requisitionerEmail || reqDirectory?.email || "");
+    setAmdEmail(pendingAmd?.evaluatorEmail || pendingAmd?.amdEmail || amdMatch?.email || findDirectoryContact(po.receivedBy, "amd_personnel")?.email || "");
     setCreatedLinks({
       purchaser: pendingPurchaser ? `${window.location.origin}/evaluate/${pendingPurchaser.token}` : "",
       requisitioner: pendingReq ? `${window.location.origin}/evaluate/${pendingReq.token}` : "",
       amd_personnel: pendingAmd ? `${window.location.origin}/evaluate/${pendingAmd.token}` : "",
     });
     setPreviewOpen(true);
+  };
+
+  const syncPendingEvaluationLinks = async (po: PurchaseOrder) => {
+    const roles = ["purchaser", "requisitioner", "amd_personnel"] as const;
+    await Promise.all(roles.map(async (role) => {
+      const link = getPendingLink(po.poNumber, role);
+      if (link) await updateEvaluationLinkPOCloud(link.token, po);
+    }));
+  };
+
+  const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read the PO image for detail extraction."));
+    reader.readAsDataURL(file);
+  });
+
+  const updatePoItem = (index: number, patch: Partial<PurchaseOrderLine>) => {
+    setSelectedPo((current) => {
+      if (!current) return current;
+      const items = current.items.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        const next = { ...item, ...patch };
+        if ("qty" in patch || "unitPrice" in patch || "itemDiscountPct" in patch) {
+          const qty = amount(next.qty);
+          const unitPrice = amount(next.unitPrice);
+          const discount = amount(next.itemDiscountPct);
+          if (qty && unitPrice) next.lineTotal = qty * unitPrice * Math.max(0, 1 - discount / 100);
+        }
+        return next;
+      });
+      const grossSubtotal = items.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice), 0);
+      const itemDiscounts = items.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice) * amount(item.itemDiscountPct) / 100, 0);
+      const netSubtotal = Math.max(0, grossSubtotal - itemDiscounts);
+      const overallDiscount = netSubtotal * amount(current.discountPct) / 100;
+      const computedTotal = Math.max(0, netSubtotal - overallDiscount);
+      return { ...current, items, subtotal: grossSubtotal || current.subtotal, discountAmt: overallDiscount || current.discountAmt, total: computedTotal || current.total };
+    });
   };
 
   const uploadOfficialPo = async (files: File[]) => {
@@ -455,68 +690,161 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         setUploadProgress(Math.round(average));
       })));
       const documentPages = uploaded.map((doc, index) => ({
-        url: doc.url,
-        publicId: doc.publicId,
-        resourceType: doc.resourceType,
-        format: doc.format,
-        name: doc.originalFilename || chosen[index].name,
-        mimeType: chosen[index].type || undefined,
-        size: doc.bytes || chosen[index].size,
-        pages: doc.pages,
+        url: doc.url, publicId: doc.publicId, resourceType: doc.resourceType, format: doc.format,
+        name: doc.originalFilename || chosen[index].name, mimeType: chosen[index].type || undefined,
+        size: doc.bytes || chosen[index].size, pages: doc.pages,
       }));
-      const first = documentPages[0];
-      const updated = {
-        ...selectedPo,
-        documentProvider: "cloudinary" as const,
-        documentPages,
-        documentUrl: first.url,
-        documentName: documentPages.length === 1 ? first.name : `${selectedPo.poNumber} · ${documentPages.length} pages`,
-        documentMimeType: first.mimeType || `application/${first.format || "octet-stream"}`,
+
+      // For image scans, use the existing Gemini extractor to pull visible PO pricing/details.
+      // This never replaces a value already present in the spreadsheet/saved PO.
+      let extracted: any = null;
+      const imageFile = chosen.find((file) => /^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || ""));
+      if (imageFile) {
+        setPoExtracting(true);
+        try {
+          const image = await fileToDataUrl(imageFile);
+          const response = await fetch("/api/gemini-po-extract", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image }),
+          });
+          const data = await response.json();
+          if (response.ok && data?.ok && data?.data) extracted = data.data;
+        } catch (error) {
+          console.warn("PO detail extraction failed:", error);
+        } finally {
+          setPoExtracting(false);
+        }
+      }
+
+      const extractedItems: PurchaseOrderLine[] = Array.isArray(extracted?.items)
+        ? extracted.items.map((item: any, index: number) => {
+            const qty = item.qty ?? "";
+            const unitPrice = item.unitPrice ?? "";
+            const discount = item.itemDiscountPct ?? 0;
+            const lineTotal = item.lineTotal ?? (amount(qty) * amount(unitPrice) * Math.max(0, 1 - amount(discount) / 100));
+            return { line: index + 1, description: String(item.description || ""), unit: String(item.unit || "pcs"), qty, unitPrice, itemDiscountPct: discount, lineTotal };
+          }).filter((item: PurchaseOrderLine) => item.description || amount(item.qty) || amount(item.unitPrice) || amount(item.lineTotal))
+        : [];
+      const extractedSubtotal = amount(extracted?.subtotal) || extractedItems.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice), 0);
+      const extractedTotal = amount(extracted?.total) || extractedItems.reduce((sum, item) => sum + amount(item.lineTotal), 0);
+
+      const baseUpdated = {
+        ...selectedPo, documentProvider: "cloudinary" as const, documentPages, documentUrl: documentPages[0].url,
+        documentName: documentPages.length === 1 ? documentPages[0].name : `${selectedPo.poNumber} · ${documentPages.length} pages`,
+        documentMimeType: documentPages[0].mimeType || `application/${documentPages[0].format || "octet-stream"}`,
         documentSize: documentPages.reduce((sum, doc) => sum + Number(doc.size || 0), 0),
-        documentUploadedAt: new Date().toISOString(),
-        documentUploadedBy: currentUser?.email || "",
-        documentSource: "cloudinary-official-po",
-        documentPath: first.publicId,
+        documentUploadedAt: new Date().toISOString(), documentUploadedBy: currentUser?.email || "",
+        documentSource: "cloudinary-official-po", documentPath: documentPages[0].publicId,
       } as PurchaseOrder;
-      setSelectedPo(updated);
-      await savePurchaseOrderCloud(updated);
-      const pendingReq = getPendingLink(updated.poNumber, "requisitioner");
-      const pendingAmd = getPendingLink(updated.poNumber, "amd_personnel");
-      await Promise.all([
-        pendingReq ? updateEvaluationLinkPOCloud(pendingReq.token, updated) : Promise.resolve(),
-        pendingAmd ? updateEvaluationLinkPOCloud(pendingAmd.token, updated) : Promise.resolve(),
-      ]);
-      onNotify(`Official PO ${updated.poNumber} stored in Cloudinary${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}.`);
+
+      const hasExistingPrice = baseUpdated.items?.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0);
+      const enriched: PurchaseOrder = {
+        ...baseUpdated,
+        poNumber: baseUpdated.poNumber || String(extracted?.poNumber || "").trim(),
+        vendorName: baseUpdated.vendorName || String(extracted?.supplier || "").trim(),
+        vendorAttention: baseUpdated.vendorAttention || String(extracted?.attention || "").trim(),
+        vendorPhone: baseUpdated.vendorPhone || String(extracted?.vendorPhone || "").trim(),
+        deliveryAddress: baseUpdated.deliveryAddress || String(extracted?.deliveryAddress || "").trim(),
+        orderDate: baseUpdated.orderDate || String(extracted?.orderDate || "").trim(),
+        expectedDate: baseUpdated.expectedDate || String(extracted?.expectedDate || "").trim(),
+        paymentTerms: baseUpdated.paymentTerms || String(extracted?.paymentTerms || "").trim(),
+        prfNumber: baseUpdated.prfNumber || String(extracted?.prfNumber || "").trim(),
+        buyerName: baseUpdated.buyerName || String(extracted?.buyerName || "").trim(),
+        purpose: baseUpdated.purpose || String(extracted?.purpose || "").trim(),
+        notes: baseUpdated.notes || String(extracted?.notes || "").trim(),
+        items: extractedItems.length && !hasExistingPrice ? extractedItems : baseUpdated.items,
+        subtotal: amount(baseUpdated.subtotal) || extractedSubtotal,
+        discountPct: amount(baseUpdated.discountPct) || amount(extracted?.discountPct),
+        discountAmt: amount(baseUpdated.discountAmt) || amount(extracted?.discountAmt),
+        total: amount(baseUpdated.total) || extractedTotal,
+        deliveryLeadTimeDays: baseUpdated.deliveryLeadTimeDays ?? calculateDeliveryLeadTime(baseUpdated.orderDate, baseUpdated.actualDeliveryDate) ?? undefined,
+      };
+
+      setSelectedPo(enriched);
+      await savePurchaseOrderCloud(enriched);
+      await syncPendingEvaluationLinks(enriched);
+      const priceFound = extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0;
+      onNotify(`Official PO ${enriched.poNumber || "record"} stored in Cloudinary${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "Could not store the PO document.");
     } finally {
-      setUploading(false);
-      setUploadProgress(0);
+      setUploading(false); setPoExtracting(false); setUploadProgress(0);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const resolveBuyerEmail = () =>
-    buyerEmail.trim() || selectedPo?.buyerEmail || "";
+    buyerEmail.trim() || selectedPo?.buyerEmail || findDirectoryContact(selectedPo?.buyerName || "", "purchaser")?.email || "";
 
   const resolveReqEmail = () =>
     requisitionerEmail.trim() ||
-    requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(selectedPo?.requisitioner))?.email ||
     selectedPo?.requisitionerEmail ||
+    requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(selectedPo?.requisitioner))?.email ||
+    findDirectoryContact(selectedPo?.requisitioner || "", "requisitioner")?.email ||
     "";
 
   const resolveAmdEmail = () =>
     amdEmail.trim() ||
-    requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(selectedPo?.receivedBy))?.email ||
+    findDirectoryContact(selectedPo?.receivedBy || "", "amd_personnel")?.email ||
+    allEvaluatorContacts.find((item) => normalizePerson(item.name) === normalizePerson(selectedPo?.receivedBy))?.email ||
     "";
+
+  const rememberContact = async (role: EvaluationContactRole, name: string, email: string, department?: string) => {
+    const cleanName = String(name || "").trim();
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanName || !cleanEmail.includes("@")) return;
+    try {
+      await upsertEvaluationContactCloud({
+        name: cleanName,
+        email: cleanEmail,
+        roles: [role],
+        department: department || "",
+        createdBy: currentUser?.email || "",
+      });
+    } catch (error) {
+      console.warn("Could not remember evaluator email:", error);
+    }
+  };
+
+  const saveCurrentPo = async () => {
+    if (!selectedPo) return;
+    if (!selectedPo.poNumber.trim()) {
+      onNotify("Enter the PO number before saving the PO record.");
+      return;
+    }
+    const reqEmail = resolveReqEmail();
+    const next = {
+      ...selectedPo,
+      buyerEmail: resolveBuyerEmail(),
+      requisitionerEmail: reqEmail,
+      deliveryLeadTimeDays: calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) ?? undefined,
+    } as PurchaseOrder;
+    setSelectedPo(next);
+    await savePurchaseOrderCloud(next);
+    await syncPendingEvaluationLinks(next);
+    await Promise.all([
+      rememberContact("purchaser", next.buyerName, next.buyerEmail),
+      rememberContact("requisitioner", next.requisitioner, reqEmail, next.department),
+      rememberContact("amd_personnel", next.receivedBy, resolveAmdEmail(), next.department),
+    ]);
+    onNotify("PO record saved. Evaluator emails have been remembered for future use.");
+  };
 
   const createEvaluationLinks = async () => {
     if (!selectedPo) return;
+    if (!selectedPo.poNumber.trim()) {
+      onNotify("Enter the PO number first. This PRF has no PO group yet, so the PO number must be typed manually before evaluation links are created.");
+      return;
+    }
     const buyerAuto = resolveBuyerEmail();
     const reqEmail = resolveReqEmail();
     const amdAuto = resolveAmdEmail();
     const nextLinks: { purchaser?: string; requisitioner?: string; amd_personnel?: string } = {};
     try {
+      await Promise.all([
+        rememberContact("purchaser", selectedPo.buyerName, buyerAuto),
+        rememberContact("requisitioner", selectedPo.requisitioner, reqEmail, selectedPo.department),
+        rememberContact("amd_personnel", selectedPo.receivedBy, amdAuto, selectedPo.department),
+      ]);
       if (selectedPo.buyerName) {
         const existingPurchaser = getPendingLink(selectedPo.poNumber, "purchaser");
         if (existingPurchaser) {
@@ -584,11 +912,13 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel") => {
     if (!selectedPo?.documentUrl) throw new Error("Store the official PO first. The stored Cloudinary document will be attached automatically.");
+    if (!selectedPo.poNumber.trim()) throw new Error("Enter the PO number before sending the evaluation request.");
     const reqEmail = resolveReqEmail();
     const targetEmail = role === "purchaser" ? resolveBuyerEmail() : role === "requisitioner" ? reqEmail : resolveAmdEmail();
     const targetName = role === "purchaser" ? selectedPo.buyerName : role === "requisitioner" ? selectedPo.requisitioner : selectedPo.receivedBy;
     if (!targetName) throw new Error(role === "purchaser" ? "Add a Purchasing / Buyer name before sending." : role === "requisitioner" ? "Add a requisitioner name before sending." : "No Received by person is set for AMD evaluation.");
     if (!targetEmail) throw new Error(role === "purchaser" ? "No Purchasing / Buyer email was found. Enter a manual email or check the Employee sheet." : role === "requisitioner" ? "No requisitioner email was found. Enter a manual email or check the Employee sheet." : "No AMD / Received by email was found. Enter a manual email or check the Employee sheet.");
+    await rememberContact(role, targetName, targetEmail, selectedPo.department);
 
     let link = role === "purchaser" ? createdLinks.purchaser : role === "requisitioner" ? createdLinks.requisitioner : createdLinks.amd_personnel;
     if (!link) {
@@ -597,7 +927,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     }
     if (!link) {
       const result = await createEvaluationLinkCloud({
-        po: { ...selectedPo, buyerEmail: role === "purchaser" ? targetEmail : selectedPo.buyerEmail, requisitionerEmail: reqEmail },
+        po: { ...selectedPo, buyerEmail: role === "purchaser" ? targetEmail : selectedPo.buyerEmail, requisitionerEmail: reqEmail, deliveryLeadTimeDays: calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) ?? undefined },
         requisitionerEmail: reqEmail,
         requisitionerName: selectedPo.requisitioner,
         evaluatorRole: role,
@@ -624,7 +954,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         requisitionerEmail: reqEmail,
         amdName: selectedPo.receivedBy,
         amdEmail: role === "amd_personnel" ? targetEmail : resolveAmdEmail(),
-        po: { ...selectedPo, buyerEmail: role === "purchaser" ? targetEmail : selectedPo.buyerEmail },
+        po: { ...selectedPo, buyerEmail: role === "purchaser" ? targetEmail : selectedPo.buyerEmail, deliveryLeadTimeDays: calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) ?? undefined },
         poDocumentUrl: selectedPo.documentUrl,
         poDocumentName: selectedPo.documentName || `${selectedPo.poNumber}.pdf`,
         poDocuments: (selectedPo.documentPages || [{ url: selectedPo.documentUrl, name: selectedPo.documentName || `${selectedPo.poNumber}.pdf`, mimeType: selectedPo.documentMimeType }]).map((doc) => ({ url: doc.url, name: doc.name, mimeType: doc.mimeType })),
@@ -669,28 +999,73 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     <div>
       <div className="page-heading">
         <div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE & EVALUATION QUEUE</div><h1>Find the PO, store the official document, then send evaluation</h1><p>The Google Sheet remains the source for purchasing details. The official scanned/uploaded PO is stored in Cloudinary and automatically reused for the Purchasing / Buyer, requisitioner, and AMD evaluation emails.</p></div>
-        <div className="po-generator-actions"><button className="btn secondary" onClick={() => void sync()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> {loading ? "Syncing…" : "Sync Google Sheet"}</button></div>
+        <div className="po-generator-actions"><a className="btn secondary" href="/email-directory"><Mail size={15}/> Email Directory</a><button className="btn secondary" onClick={() => void sync()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> {loading ? "Syncing…" : "Sync Google Sheet"}</button></div>
       </div>
 
       <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Google Sheet needs attention" : fetchedAt ? "Google Sheet connected" : "Connecting to Google Sheet…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading PO and PRF details from the configured spreadsheet")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
 
-      <div className="po-evaluation-tabs"><button className={queueOnly ? "active" : ""} onClick={() => setQueueOnly(true)}>For Supplier Evaluation <span>{poRecords.filter((g) => !submittedByPo.has(normalizeKey(g.poNumber))).length}</span></button><button className={!queueOnly ? "active" : ""} onClick={() => setQueueOnly(false)}>All PO Records <span>{poRecords.length}</span></button></div>
+      <div className="po-evaluation-tabs"><button className={queueOnly ? "active" : ""} onClick={() => setQueueOnly(true)}>For Supplier Evaluation <span>{poRecords.filter((g) => !submittedByPo.has(normalizeKey(g.poNumber))).length + prfOnlyRecords.filter((item) => !submittedByPrf.has(normalizeKey(item.prfNumber))).length}</span></button><button className={!queueOnly ? "active" : ""} onClick={() => setQueueOnly(false)}>All PO Records <span>{poRecords.length + prfOnlyRecords.length}</span></button></div>
 
       <div className="panel po-generator-panel">
-        <div className="po-generator-toolbar"><div className="search-box"><Search size={16}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search PO, PRF, supplier, requisitioner, item…"/></div><div className="result-count">{records.length.toLocaleString()} PO shown{query.trim() ? ` · ${prfSearchResults.length.toLocaleString()} PRF matches` : ""}</div></div>
-        <div className="table-wrap"><table><thead><tr><th>PO Number</th><th>PRF</th><th>Supplier</th><th>Requisitioner</th><th>Document</th><th>Evaluation</th><th /></tr></thead><tbody>{records.map((group) => { const first = group.matches[0] || {} as PurchaseOrderSheetMatch; const saved = savedByPo.get(normalizeKey(group.poNumber)); const hasDoc = Boolean(saved?.documentUrl || saved?.documentPages?.length); const pending = Boolean(
-  getPendingLink(group.poNumber, "purchaser") ||
-  getPendingLink(group.poNumber, "requisitioner") ||
-  getPendingLink(group.poNumber, "amd_personnel")
-); const done = submittedByPo.has(normalizeKey(group.poNumber)); const status = displayStatus(done, pending, hasDoc); return <tr key={group.poNumber}><td><span className="mono">{group.poNumber}</span></td><td>{first.prfNumber || "—"}</td><td><b>{first.supplier || "—"}</b></td><td>{first.requisitioner || "—"}</td><td>{hasDoc ? <span className="badge badge-ready"><FileImage size={12}/> Stored</span> : <span className="badge badge-missing"><UploadCloud size={12}/> Upload needed</span>}</td><td><span className={`badge badge-${status.tone}`}>{status.label}</span></td><td><button className="icon-action po-generate-btn" disabled={!canEdit} onClick={() => selectRecord(group)} title="Open PO storage and evaluation"><Eye size={15}/> Open</button></td></tr>; })}{!records.length && !prfSearchResults.length && <tr><td colSpan={7}><div className="empty"><div className="empty-icon">📋</div><div className="empty-title">No PO or PRF records found</div><div className="empty-sub">The search checks both the PO-for-Evaluation records and all PRF records loaded from the V2 monitoring sheet.</div></div></td></tr>}{!records.length && prfSearchResults.length > 0 && <tr><td colSpan={7}><div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">No matching PO group</div><div className="empty-sub">Matching PRF records are listed below from the V2 monitoring sheet.</div></div></td></tr>}</tbody></table></div>
-
-        {query.trim() && prfSearchResults.length > 0 && <div className="panel" style={{ marginTop: 16, padding: 18 }}><div className="section-kicker">V2 PRF MONITORING RECORDS</div><h3 style={{ margin: "6px 0 4px" }}>PRF matches from the monitoring sheet</h3><p style={{ margin: 0, opacity: 0.75 }}>These rows are searchable even when the PRF has no matching PO group yet.</p><div className="table-wrap" style={{ marginTop: 12 }}><table><thead><tr><th>PRF</th><th>Requisitioner</th><th>Department</th><th>Item / Description</th><th>Purpose</th><th /></tr></thead><tbody>{prfSearchResults.slice(0, 100).map((prf) => { const poGroup = findPoGroupForPrf(prf.prfNumber); return <tr key={`prf-${prf.prfNumber}`}><td><span className="mono">{prf.prfNumber || "—"}</span></td><td><b>{prf.requisitioner || "—"}</b><small style={{ display: "block", opacity: 0.7 }}>{prf.email || "No email"}</small></td><td>{prf.department || "—"}</td><td>{prf.itemDescription || "—"}</td><td>{prf.purpose || "—"}</td><td>{poGroup ? <button className="icon-action po-generate-btn" disabled={!canEdit} onClick={() => selectRecord(poGroup)} title="Open matching PO"><Eye size={15}/> Open PO</button> : <span className="badge badge-missing">PRF only · no PO group yet</span>}</td></tr>; })}{prfSearchResults.length > 100 && <tr><td colSpan={6}><div style={{ padding: "10px 0", textAlign: "center", opacity: 0.7 }}>Showing first 100 PRF matches out of {prfSearchResults.length.toLocaleString()}.</div></td></tr>}</tbody></table></div></div>}
+        <div className="po-generator-toolbar">
+          <div className="search-box"><Search size={16}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search PO, PRF, supplier, requisitioner, item…"/></div>
+          <div className="result-count">{records.length.toLocaleString()} records shown</div>
+        </div>
+        <div className="table-wrap"><table><thead><tr><th>PO Number</th><th>PRF</th><th>Supplier</th><th>Requisitioner</th><th>Document</th><th>Evaluation</th><th /></tr></thead><tbody>
+          {pagedRecords.map((group) => {
+            const first: PurchaseOrderSheetMatch = group.matches[0] || { poNumber: group.poNumber || "", prfNumber: "", itemsDelivered: "", supplier: "" };
+            const saved = savedByPo.get(normalizeKey(group.poNumber)) || savedByPrf.get(normalizeKey(first.prfNumber));
+            const poNumber = group.poNumber || saved?.poNumber || "";
+            const hasDoc = Boolean(saved?.documentUrl || saved?.documentPages?.length);
+            const done = Boolean(submittedByPrf.has(normalizeKey(first.prfNumber)) || (poNumber && submittedByPo.has(normalizeKey(poNumber))));
+            const pending = Boolean(poNumber && (getPendingLink(poNumber, "purchaser") || getPendingLink(poNumber, "requisitioner") || getPendingLink(poNumber, "amd_personnel")));
+            const status = displayStatus(done, pending, hasDoc);
+            return <tr key={`${group.prfOnly ? "prf" : "po"}-${group.poNumber || first.prfNumber}`}>
+              <td><span className={poNumber ? "mono" : "badge badge-missing"}>{poNumber || "PO not assigned"}</span></td>
+              <td><b>{first.prfNumber || "—"}</b></td>
+              <td><b>{first.supplier || saved?.vendorName || "—"}</b></td>
+              <td>{first.requisitioner || saved?.requisitioner || "—"}</td>
+              <td>{hasDoc ? <span className="badge badge-ready"><FileImage size={12}/> Stored</span> : <span className="badge badge-missing"><UploadCloud size={12}/> Upload needed</span>}</td>
+              <td><span className={`badge badge-${status.tone}`}>{status.label}</span></td>
+              <td><button className="icon-action po-generate-btn" disabled={!canEdit} onClick={() => selectRecord(group)} title="Open PO storage and evaluation"><Eye size={15}/> Open</button></td>
+            </tr>;
+          })}
+          {!records.length && <tr><td colSpan={7}><div className="empty"><div className="empty-icon">📋</div><div className="empty-title">No PO or PRF records found</div><div className="empty-sub">The search checks PO records and all unmatched PRFs from the V2 monitoring sheet. PRF-only records can be opened and assigned a PO number manually.</div></div></td></tr>}
+        </tbody></table></div>
+        {records.length > queuePageSize && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, opacity: 0.72 }}>Showing {Math.min(records.length, (queuePage - 1) * queuePageSize + 1)}–{Math.min(records.length, queuePage * queuePageSize)} of {records.length.toLocaleString()} records</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button className="btn ghost btn-sm" disabled={queuePage <= 1} onClick={() => setQueuePage((p) => Math.max(1, p - 1))}>Previous</button>
+            <span style={{ fontSize: 12, minWidth: 80, textAlign: "center" }}>Page {queuePage} / {queuePageCount}</span>
+            <button className="btn ghost btn-sm" disabled={queuePage >= queuePageCount} onClick={() => setQueuePage((p) => Math.min(queuePageCount, p + 1))}>Next</button>
+          </div>
+        </div>}
       </div>
 
       {previewOpen && selectedPo && <div className="modal-backdrop"><div className="po-generator-modal"><div className="po-generator-modal-head"><div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE {selectedPo.documentUrl ? "· OFFICIAL DOCUMENT STORED" : "· WAITING FOR OFFICIAL DOCUMENT"}</div><h2>{selectedPo.poNumber}</h2><p>{selectedPo.vendorName || "Supplier"} · PRF {selectedPo.prfNumber || "—"}</p></div><button className="icon-button" onClick={() => setPreviewOpen(false)}><X size={18}/></button></div><div className="po-generator-modal-body"><div className="po-preview-card">
         {selectedPo.documentUrl ? <div className="stored-po-viewer"><div className="stored-po-toolbar"><div><b>Official PO stored in Cloudinary</b><span>{selectedPo.documentName || "Stored PO document"}</span></div><a className="btn secondary btn-sm" href={selectedPo.documentUrl} target="_blank" rel="noreferrer">Open document</a></div>{(selectedPo.documentPages || [{ url: selectedPo.documentUrl, name: selectedPo.documentName || "Official PO", mimeType: selectedPo.documentMimeType }]).map((doc, index) => <div className="stored-po-page" key={`${doc.url}-${index}`}><div className="stored-po-page-label">{doc.mimeType === "application/pdf" && doc.pages && doc.pages > 1 ? `${doc.pages}-PAGE PDF` : `PAGE ${index + 1}${selectedPo.documentPages?.length ? ` OF ${selectedPo.documentPages.length}` : ""}`}</div>{doc.mimeType?.startsWith("image/") ? <img src={doc.url} alt={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-image"/> : <iframe title={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-frame" src={doc.url}/>} </div>)}<button className="btn ghost btn-sm replace-po-btn" disabled={!canEdit || uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? `Uploading… ${uploadProgress}%` : "Replace / add PO pages"}</button></div> : <div className="po-empty-document"><div className="po-empty-document-icon"><UploadCloud size={22}/></div><b>No official PO stored yet</b><span>Upload the actual PDF or select multiple page images. The stored document—not a generated template—will be used for the requisitioner email.</span></div>}<input ref={fileInputRef} hidden type="file" accept="application/pdf,image/*" multiple onChange={(e) => e.target.files?.length && void uploadOfficialPo(Array.from(e.target.files))}/></div>
-        <aside className="po-send-panel"><div className="section-kicker">EVALUATION WORKFLOW</div><h3>1. Store official PO</h3><p>Upload the actual PO PDF or scan. PDF files can contain multiple pages, and you can also select multiple page images. The stored Cloudinary document is the exact source attached to both evaluator emails.</p><button className="upload-drop-btn" disabled={!canEdit || uploading} onClick={() => fileInputRef.current?.click()}><UploadCloud size={18}/><span>{selectedPo.documentUrl ? "Replace stored PO" : "Upload / Scan PO"}</span><small>PDF, JPG, PNG · up to 25 MB per file · multi-page supported</small></button>{selectedPo.documentUrl && <div className="stored-doc-callout"><CheckCircle2 size={16}/><div><b>PO document stored in Cloudinary</b><span>{selectedPo.documentName || "Official PO"}</span><small>{selectedPo.documentUploadedAt ? `Uploaded ${new Date(selectedPo.documentUploadedAt).toLocaleString()}` : ""}{selectedPo.documentPages?.length ? ` · ${selectedPo.documentPages.length} stored file${selectedPo.documentPages.length > 1 ? "s" : ""}` : ""}</small></div></div>}{uploading && <div className="po-upload-progress"><div><span>Uploading official PO to Cloudinary</span><b>{uploadProgress}%</b></div><i style={{ width: `${uploadProgress}%` }}/></div>}
-          <div className="po-delivery-summary"><div><span>Expected delivery</span><b>{selectedPo.expectedDate || "—"}</b></div><div><span>Actual delivery</span><b>{selectedPo.actualDeliveryDate || "—"}</b></div><div><span>Status</span><b>{selectedPo.status || "Pending"}</b></div><div><span>Received by</span><b>{selectedPo.receivedBy || "—"}</b></div></div><div className="section-kicker workflow-second">2. Purchasing / Buyer evaluation</div><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => setSelectedPo({ ...selectedPo, buyerName: e.target.value })} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · auto-resolved from Employee sheet</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from Employee sheet · manual override allowed"/></label><div className="section-kicker workflow-second">3. Requisitioner evaluation</div><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · auto-resolved from Employee sheet</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from Employee sheet · manual override allowed"/></label><div className="section-kicker workflow-second">4. AMD Personnel / Received by evaluation</div><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · auto-resolved from Employee sheet</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from Employee sheet · manual override allowed"/></label><div className="po-action-stack"><button className="btn secondary" onClick={() => void savePurchaseOrderCloud({ ...selectedPo, requisitionerEmail: resolveReqEmail() })}><CheckCircle2 size={16}/> Save PO record</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links</small>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div style={{marginTop:8}}><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All use the same official Cloudinary PO attachment, while results are saved separately by evaluator role.</span></div></aside></div></div></div>}
+        <aside className="po-send-panel"><div className="section-kicker">TRANSACTION IDENTIFIER</div><h3>PO / PRF details</h3><div className="field"><span>PO Number {selectedPo.poNumber ? "" : "· enter manually when available"}</span><input value={selectedPo.poNumber} onChange={(e) => setSelectedPo({ ...selectedPo, poNumber: e.target.value })} placeholder="Type PO number if the PRF has no PO group yet"/></div>{!selectedPo.poNumber && <div className="po-warning-note"><Search size={14}/><span>This PRF came directly from the V2 monitoring sheet and has no PO group yet. Enter the PO number here when available; the PRF details are already loaded.</span></div>}<div className="section-kicker">EVALUATION WORKFLOW</div><h3>1. Store official PO</h3><p>Upload the actual PO PDF or scan. PDF files can contain multiple pages, and you can also select multiple page images. The stored Cloudinary document is the exact source attached to both evaluator emails.</p><button className="upload-drop-btn" disabled={!canEdit || uploading} onClick={() => fileInputRef.current?.click()}><UploadCloud size={18}/><span>{selectedPo.documentUrl ? "Replace stored PO" : "Upload / Scan PO"}</span><small>PDF, JPG, PNG · up to 25 MB per file · multi-page supported</small></button>{selectedPo.documentUrl && <div className="stored-doc-callout"><CheckCircle2 size={16}/><div><b>PO document stored in Cloudinary</b><span>{selectedPo.documentName || "Official PO"}</span><small>{selectedPo.documentUploadedAt ? `Uploaded ${new Date(selectedPo.documentUploadedAt).toLocaleString()}` : ""}{selectedPo.documentPages?.length ? ` · ${selectedPo.documentPages.length} stored file${selectedPo.documentPages.length > 1 ? "s" : ""}` : ""}</small></div></div>}{uploading && <div className="po-upload-progress"><div><span>Uploading official PO to Cloudinary</span><b>{uploadProgress}%</b></div><i style={{ width: `${uploadProgress}%` }}/></div>}
+          <div className="po-delivery-summary"><div><span>Expected delivery</span><b>{selectedPo.expectedDate || "—"}</b></div><div><span>Actual delivery</span><b>{selectedPo.actualDeliveryDate || "—"}</b></div><div><span>Delivery lead time</span><b>{calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) !== null ? `${calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate)} days` : "—"}</b></div><div><span>Status</span><b>{selectedPo.status || "Pending"}</b></div><div><span>Received by</span><b>{selectedPo.receivedBy || "—"}</b></div></div>
+          <div className="section-kicker workflow-second">2. PO details & pricing</div>
+          <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680, fontSize: 11 }}>
+              <thead><tr><th style={{ padding: 7, textAlign: "left" }}>Qty</th><th style={{ padding: 7, textAlign: "left" }}>Unit</th><th style={{ padding: 7, textAlign: "left" }}>Item / Description</th><th style={{ padding: 7, textAlign: "right" }}>Unit Price</th><th style={{ padding: 7, textAlign: "right" }}>Disc %</th><th style={{ padding: 7, textAlign: "right" }}>Line Total</th></tr></thead>
+              <tbody>{selectedPo.items.map((item, index) => <tr key={index}>
+                <td style={{ padding: 6 }}><input className="inp" value={String(item.qty ?? "")} onChange={(e) => updatePoItem(index, { qty: e.target.value })} /></td>
+                <td style={{ padding: 6 }}><input className="inp" value={String(item.unit ?? "")} onChange={(e) => updatePoItem(index, { unit: e.target.value })} /></td>
+                <td style={{ padding: 6, minWidth: 220 }}><input className="inp" value={String(item.description ?? "")} onChange={(e) => updatePoItem(index, { description: e.target.value })} /></td>
+                <td style={{ padding: 6 }}><input className="inp" inputMode="decimal" value={String(item.unitPrice ?? "")} onChange={(e) => updatePoItem(index, { unitPrice: e.target.value })} /></td>
+                <td style={{ padding: 6 }}><input className="inp" inputMode="decimal" value={String(item.itemDiscountPct ?? 0)} onChange={(e) => updatePoItem(index, { itemDiscountPct: e.target.value })} /></td>
+                <td style={{ padding: 6 }}><input className="inp" inputMode="decimal" value={String(item.lineTotal ?? "")} onChange={(e) => updatePoItem(index, { lineTotal: e.target.value })} /></td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, marginBottom: 10 }}>
+            <label className="field"><span>Subtotal</span><input inputMode="decimal" value={String(selectedPo.subtotal || "")} onChange={(e) => setSelectedPo({ ...selectedPo, subtotal: amount(e.target.value) })} /></label>
+            <label className="field"><span>Overall discount %</span><input inputMode="decimal" value={String(selectedPo.discountPct || "")} onChange={(e) => setSelectedPo({ ...selectedPo, discountPct: amount(e.target.value) })} /></label>
+            <label className="field"><span>Total amount</span><input inputMode="decimal" value={String(selectedPo.total || "")} onChange={(e) => setSelectedPo({ ...selectedPo, total: amount(e.target.value) })} /></label>
+          </div>
+          <div style={{ fontSize: 10.5, opacity: 0.72, marginBottom: 10 }}>{poExtracting ? "Reading pricing and PO details from the uploaded scan…" : "Image scans are checked by Gemini for visible pricing. You can correct the values above before saving."}</div><div className="section-kicker workflow-second">2. Purchasing / Buyer evaluation</div><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => { const next = e.target.value; const directory = findDirectoryContact(next, "purchaser"); setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || selectedPo.buyerEmail }); setBuyerEmail(directory?.email || buyerEmail); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · auto-resolved from Employee sheet</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><div className="section-kicker workflow-second">4. Requisitioner evaluation</div><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · auto-resolved from Employee sheet</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><div className="section-kicker workflow-second">5. AMD Personnel / Received by evaluation</div><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · auto-resolved from Employee sheet</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><div style={{ margin: "-2px 0 10px", fontSize: 12, opacity: 0.78 }}>Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links</small>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div style={{marginTop:8}}><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All use the same official Cloudinary PO attachment, while results are saved separately by evaluator role.</span></div></aside></div></div></div>}
     </div>
   );
 }

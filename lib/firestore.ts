@@ -416,6 +416,7 @@ export type PurchaseOrder = {
   status: string;
   actualDeliveryDate: string;
   receivedBy: string;
+  deliveryLeadTimeDays?: number;
   createdAt: string;
   source: string;
   items: PurchaseOrderLine[];
@@ -432,6 +433,30 @@ export type PurchaseOrder = {
 };
 
 export type EvaluationRole = "requisitioner" | "amd_personnel" | "purchaser";
+
+export type EvaluationContactRole = EvaluationRole;
+
+export type EvaluationContact = {
+  id: string;
+  name: string;
+  email: string;
+  roles: EvaluationContactRole[];
+  department?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+};
+
+export const EVALUATION_CONTACTS = "evaluationContacts";
+
+function contactDocId(name: string) {
+  const normalized = String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) hash = (hash * 31 + normalized.charCodeAt(i)) | 0;
+  const slug = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 70) || "contact";
+  return `${slug}-${Math.abs(hash).toString(36)}`;
+}
 
 export type PublicEvaluationLink = {
   token: string;
@@ -581,6 +606,66 @@ export async function getPublicEvaluationLink(token: string): Promise<PublicEval
   return { ...data, token };
 }
 
+export function subscribeEvaluationContacts(callback: (items: EvaluationContact[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  const firestore = requireDb();
+  return onSnapshot(
+    query(collection(firestore, EVALUATION_CONTACTS)),
+    (snapshot) => {
+      const items = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as EvaluationContact);
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      callback(items);
+    },
+    (error) => onError?.(error),
+  );
+}
+
+export async function upsertEvaluationContactCloud(input: {
+  name: string;
+  email: string;
+  roles: EvaluationContactRole[];
+  department?: string;
+  notes?: string;
+  createdBy?: string;
+  replaceRoles?: boolean;
+}) {
+  const firestore = requireDb();
+  await signInToFirebase();
+  const cleanName = String(input.name || "").trim();
+  const cleanEmail = String(input.email || "").trim().toLowerCase();
+  const validRoles = Array.from(new Set((input.roles || []).filter((role): role is EvaluationContactRole =>
+    role === "purchaser" || role === "requisitioner" || role === "amd_personnel"
+  )));
+  if (!cleanName) throw new Error("Contact name is required.");
+  if (!cleanEmail.includes("@")) throw new Error("A valid email address is required.");
+  if (!validRoles.length) throw new Error("Select at least one evaluator role.");
+
+  const id = contactDocId(cleanName);
+  const ref = doc(firestore, EVALUATION_CONTACTS, id);
+  const existing = await getDoc(ref);
+  const current = existing.exists() ? existing.data() as Partial<EvaluationContact> : {};
+  const roles = input.replaceRoles ? validRoles : Array.from(new Set([...(current.roles || []), ...validRoles]));
+  const now = new Date().toISOString();
+  const payload: EvaluationContact = {
+    id,
+    name: cleanName,
+    email: cleanEmail,
+    roles,
+    department: input.department || current.department || "",
+    notes: input.notes ?? current.notes ?? "",
+    createdAt: String(current.createdAt || now),
+    updatedAt: now,
+    createdBy: input.createdBy || String(current.createdBy || ""),
+  };
+  await setDoc(ref, removeUndefined(payload), { merge: true });
+  return payload;
+}
+
+export async function deleteEvaluationContactCloud(id: string) {
+  const firestore = requireDb();
+  await signInToFirebase();
+  await deleteDoc(doc(firestore, EVALUATION_CONTACTS, String(id)));
+}
+
 export async function createPublicRequisitionerEvaluation(input: {
   token: string;
   link: PublicEvaluationLink;
@@ -636,6 +721,20 @@ export async function createPublicRequisitionerEvaluation(input: {
     submittedAt,
     evaluationLinkId: input.token,
   };
+  const calculateLeadTimeDays = (orderDate?: string, actualDeliveryDate?: string) => {
+    if (!orderDate || !actualDeliveryDate) return null;
+    const start = new Date(orderDate);
+    const end = new Date(actualDeliveryDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+    return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+  };
+  const deliveryLeadTimeDays = input.link.po.deliveryLeadTimeDays ?? calculateLeadTimeDays(input.link.po.orderDate, input.link.po.actualDeliveryDate);
+
+  row.orderDate = input.link.po.orderDate || "";
+  row.expectedDeliveryDate = input.link.po.expectedDate || "";
+  row.actualDeliveryDate = input.link.po.actualDeliveryDate || "";
+  row.deliveryLeadTimeDays = deliveryLeadTimeDays;
+
   const safeRow = removeUndefined(row);
   await setDoc(doc(firestore, EVALUATIONS, evaluationId), safeRow, { merge: false });
   await setDoc(doc(firestore, EVALUATION_LINKS, input.token), removeUndefined({ status: "submitted", submittedAt, evaluationId }), { merge: true });

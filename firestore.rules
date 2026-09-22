@@ -33,10 +33,13 @@ service cloud.firestore {
 
     match /evaluations/{evaluationId} {
       allow read: if hasPermission('view_dashboard');
+      // Public evaluation links are bearer links: the assigned evaluator does not need
+      // a Firebase/SISC account. The role, PO, and token must match the pending link.
       allow create: if hasPermission('create_evaluations') || hasPermission('import_excel')
         || (
           request.resource.data.publicToken is string
-          && request.resource.data.evaluatorRole == 'requisitioner'
+          && request.resource.data.evaluatorRole in ['purchaser', 'requisitioner', 'amd_personnel']
+          && request.resource.data.evaluatorRole == get(/databases/$(database)/documents/evaluationLinks/$(request.resource.data.publicToken)).data.evaluatorRole
           && request.resource.data.poNumber == get(/databases/$(database)/documents/evaluationLinks/$(request.resource.data.publicToken)).data.po.poNumber
           && get(/databases/$(database)/documents/evaluationLinks/$(request.resource.data.publicToken)).data.status == 'pending'
         );
@@ -63,6 +66,12 @@ service cloud.firestore {
         && request.resource.data.status == 'submitted'
       ) || hasPermission('edit_evaluations');
       allow delete: if hasPermission('delete_evaluations');
+    }
+
+    match /evaluationContacts/{contactId} {
+      allow read: if hasPermission('create_evaluations') || hasPermission('edit_evaluations');
+      allow create, update: if hasPermission('create_evaluations') || hasPermission('edit_evaluations');
+      allow delete: if hasPermission('edit_evaluations');
     }
 
     match /workspace/{documentId} {
