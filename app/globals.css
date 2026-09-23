@@ -615,3 +615,197 @@ select option{background:#fff;color:#14211a}
 .possible-requisitioner-table-wrap td:nth-child(1){min-width:300px}
 .possible-requisitioner-table-wrap td:nth-child(2){min-width:320px}
 .possible-requisitioner-table-wrap td:nth-child(3){white-space:nowrap}
+
+/*
+  Supplier Evaluation public page — TOP LAYOUT FIX
+  Append this block to the END of app/globals.css.
+
+  Fixes the public evaluator page shown in the screenshot:
+  - Constrains the SISC logo inside the header so it cannot render at its natural image size.
+  - Prevents the header image from overlapping the PO summary.
+  - Restores the 5-column delivery information cards that currently render as plain stacked text.
+  - Keeps the top information readable on tablet/mobile screens.
+*/
+
+/* --- Public evaluator header --- */
+.public-eval-header {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  min-height: 76px;
+}
+
+.public-eval-logo {
+  width: 48px !important;
+  height: 48px !important;
+  min-width: 48px !important;
+  min-height: 48px !important;
+  flex: 0 0 48px !important;
+  overflow: hidden !important;
+  position: relative;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 12px;
+}
+
+.public-eval-logo img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  object-fit: contain !important;
+  object-position: center !important;
+  border-radius: 9px;
+}
+
+.public-eval-header>div:last-child {
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.public-eval-header h1 {
+  position: relative;
+  z-index: 2;
+}
+
+/* --- Top PO summary: keep it clean and separated from the header --- */
+.public-po-summary {
+  position: relative;
+  z-index: 2;
+  margin: 14px 0 10px !important;
+}
+
+.public-po-summary>div {
+  min-width: 0;
+}
+
+.public-po-summary strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+/* --- Delivery details: the missing layout block in the screenshot --- */
+.public-delivery-strip {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0 0 18px;
+}
+
+.public-delivery-strip>div {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #dfe9e3;
+  border-radius: 12px;
+  padding: 11px 13px;
+  box-shadow: 0 3px 12px rgba(24, 51, 39, .035);
+}
+
+.public-delivery-strip span,
+.public-delivery-strip strong {
+  display: block;
+}
+
+.public-delivery-strip span {
+  font-size: 7px;
+  line-height: 1.2;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #7a8b82;
+  margin-bottom: 5px;
+}
+
+.public-delivery-strip strong {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #142018;
+  overflow-wrap: anywhere;
+}
+
+/* Give the main pricing card a clear boundary from the top metadata. */
+.public-po-pricing {
+  position: relative;
+  z-index: 2;
+  clear: both;
+}
+
+.public-po-paper {
+  position: relative;
+  z-index: 2;
+}
+
+@media(max-width:900px) {
+  .public-delivery-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media(max-width:700px) {
+  .public-eval-header {
+    align-items: flex-start !important;
+    padding: 16px 17px !important;
+    gap: 11px !important;
+    min-height: 72px;
+  }
+
+  .public-eval-logo {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    flex-basis: 44px !important;
+  }
+
+  .public-eval-header small {
+    font-size: 7px;
+    letter-spacing: .11em;
+  }
+
+  .public-eval-header h1 {
+    font-size: 21px;
+  }
+
+  .public-eval-header p {
+    font-size: 8.5px;
+    line-height: 1.4;
+  }
+
+  .public-delivery-strip {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .public-delivery-strip>div {
+    padding: 10px 11px;
+  }
+
+  .public-delivery-strip span {
+    font-size: 6.5px;
+  }
+
+  .public-delivery-strip strong {
+    font-size: 10.5px;
+  }
+}
+
+@media(max-width:420px) {
+  .public-po-summary {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .public-po-summary>div {
+    padding: 10px 11px;
+  }
+
+  .public-delivery-strip {
+    grid-template-columns: 1fr;
+  }
+}
