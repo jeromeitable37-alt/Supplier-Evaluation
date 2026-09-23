@@ -1,19 +1,27 @@
-V7 SOURCE-SEPARATION + BUILD FIX
+# Email Directory / Requisitioner Fix V7
 
-Replace exactly:
-  components/PurchaseOrderGenerator.tsx
-  lib/requisitioner-directory.ts
+This patch fixes the current TypeScript error caused by passing nullable `db`
+directly into `doc(...)` inside the requisitioner directory seeder.
 
-Source rules after this patch:
-1. Purchasing / Buyer email -> existing Employee/evaluator directory.
-2. Requisitioner email -> pasted possible-requisitioner directory (901 entries), with live sheet data able to add names not already listed.
-3. AMD / Received by email -> existing Employee/evaluator directory, filtered to amd_personnel.
-4. AMD name autocomplete no longer searches the possible-requisitioner list.
-5. The three evaluation links/emails remain separate by evaluator role.
+It also replaces the short requisitioner seed with the full `Requisitioner Details`
+directory from the supplied Purchasing Supplier Evaluation workbook.
 
-The build error in lib/requisitioner-directory.ts is fixed by narrowing db before using doc(), collection(), and writeBatch().
+Included:
+- `lib/requisitioner-directory.ts`
+- 901 possible requisitioner contacts
+- search/find helpers
+- safe optional Firestore seeder using `requireDb(db)`
+- Purchasing / Buyer and AMD / Received by are NOT mixed into this list
 
-After copying, run:
-  npm.cmd run build
+Expected workflow:
+- Purchasing / Buyer email -> existing evaluator / Employee directory
+- Requisitioner email -> this full possible-requisitioner directory (plus live sheet data)
+- AMD / Received by email -> existing evaluator / Employee directory
 
-Only push after the build passes.
+Copy `lib/requisitioner-directory.ts` into your project, replacing the current
+file with the same name.
+
+Then run:
+    npm.cmd run build
+
+Do not push until the build passes.
