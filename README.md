@@ -1,36 +1,19 @@
-# Requisitioner Directory + Email Routing Fix
+V7 SOURCE-SEPARATION + BUILD FIX
 
-This patch adds the full possible-requisitioner directory from the supplied
-`Requisitioner Details` sheet and fixes the nullable Firestore `db` TypeScript
-error.
+Replace exactly:
+  components/PurchaseOrderGenerator.tsx
+  lib/requisitioner-directory.ts
 
-Imported records: 901
+Source rules after this patch:
+1. Purchasing / Buyer email -> existing Employee/evaluator directory.
+2. Requisitioner email -> pasted possible-requisitioner directory (901 entries), with live sheet data able to add names not already listed.
+3. AMD / Received by email -> existing Employee/evaluator directory, filtered to amd_personnel.
+4. AMD name autocomplete no longer searches the possible-requisitioner list.
+5. The three evaluation links/emails remain separate by evaluator role.
 
-Important source separation:
-- Purchasing / Buyer: keep using the existing Buyer / evaluator contacts.
-- AMD / Received by: keep using the existing Employee / AMD contacts already maintained in the system.
-- Requisitioner: use this full possible-requisitioner directory as a fallback.
+The build error in lib/requisitioner-directory.ts is fixed by narrowing db before using doc(), collection(), and writeBatch().
 
-Files:
-- lib/requisitioner-directory-data.ts
-- lib/requisitioner-directory.ts
-- components/PurchaseOrderGenerator.tsx
-- app/email-directory/page.tsx
-- app/globals.css
+After copying, run:
+  npm.cmd run build
 
-The Email Directory page now has a read-only "Possible Requisitioners" section
-showing the full imported list. The PO Storage requisitioner picker also uses
-this directory, so a requisitioner can be found even when the live API/PO record
-does not already contain the email.
-
-The send flow still resolves the three evaluator roles separately:
-1. Purchasing / Buyer -> existing purchaser directory / buyer data
-2. Requisitioner -> this possible-requisitioner directory
-3. AMD / Received by -> existing AMD / Employee directory
-
-Do not run `git init`.
-
-After copying the files:
-    npm.cmd run build
-
-Only commit after the build passes.
+Only push after the build passes.

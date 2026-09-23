@@ -6,7 +6,9 @@ import {
   writeBatch,
   type Unsubscribe,
 } from "firebase/firestore";
+
 import { db } from "./firebase";
+
 import {
   POSSIBLE_REQUISITIONERS,
   REQUISITIONER_CONTACTS,
@@ -19,6 +21,7 @@ export type RequisitionerContact = RequisitionerDirectoryContact & {
 };
 
 export const CONTACTS = "requisitionerDirectory";
+
 export { POSSIBLE_REQUISITIONERS, REQUISITIONER_CONTACTS };
 
 export function normalizeRequisitionerName(value: unknown) {
@@ -39,15 +42,21 @@ export function getRequisitionerContacts(): RequisitionerContact[] {
 
 export const getPossibleRequisitioners = getRequisitionerContacts;
 
-export function findRequisitionerContacts(name: string): RequisitionerContact[] {
+export function findRequisitionerContacts(
+  name: string,
+): RequisitionerContact[] {
   const key = normalizeRequisitionerName(name);
+
   if (!key) return [];
+
   return getRequisitionerContacts().filter(
     (item) => normalizeRequisitionerName(item.name) === key,
   );
 }
 
-export function findRequisitionerContact(name: string): RequisitionerContact | undefined {
+export function findRequisitionerContact(
+  name: string,
+): RequisitionerContact | undefined {
   return findRequisitionerContacts(name)[0];
 }
 
@@ -57,44 +66,51 @@ function requireFirestore() {
       "Firebase is not configured. Add your NEXT_PUBLIC_FIREBASE_* variables.",
     );
   }
+
   return db;
 }
 
-/**
- * Live subscription. Static workbook contacts are always included so the
- * requisitioner picker works even before any directory document is seeded.
- * Firestore entries are merged on top by normalized name.
- */
 export function subscribeRequisitionerContacts(
   callback: (items: RequisitionerContact[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
   if (!db) {
     callback(getRequisitionerContacts());
+
     onError?.(
       new Error(
         "Firebase is not configured. Showing the built-in requisitioner directory only.",
       ),
     );
-    return () => {};
+
+    return () => { };
   }
 
+  // IMPORTANT:
+  // Use the narrowed local variable instead of `db` directly.
   const firestore = db;
+
   return onSnapshot(
     collection(firestore, CONTACTS),
     (snapshot) => {
       const map = new Map<string, RequisitionerContact>();
 
+      // Built-in directory
       getRequisitionerContacts().forEach((item) => {
         map.set(normalizeRequisitionerName(item.name), item);
       });
 
+      // Firestore manual overrides / additions
       snapshot.docs.forEach((snap) => {
         const data = snap.data() as Partial<RequisitionerContact>;
+
         const name = String(data.name || "").trim();
         const email = String(data.email || "").trim();
+
         if (!name || !email) return;
+
         const key = normalizeRequisitionerName(name);
+
         map.set(key, {
           name,
           email,
@@ -103,7 +119,11 @@ export function subscribeRequisitionerContacts(
         });
       });
 
-      callback(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      callback(
+        Array.from(map.values()).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ),
+      );
     },
     (error) => onError?.(error),
   );
@@ -115,19 +135,26 @@ export async function upsertRequisitionerContactCloud(input: {
   department?: string;
 }) {
   const firestore = requireFirestore();
+
   const cleanName = input.name.trim();
   const cleanEmail = input.email.trim().toLowerCase();
 
-  if (!cleanName) throw new Error("Requisitioner name is required.");
-  if (!cleanEmail.includes("@")) throw new Error("Enter a valid requisitioner email.");
+  if (!cleanName) {
+    throw new Error("Requisitioner name is required.");
+  }
 
-  const id = normalizeRequisitionerName(cleanName)
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
+  if (!cleanEmail.includes("@")) {
+    throw new Error("Enter a valid requisitioner email.");
+  }
+
+  const id =
+    normalizeRequisitionerName(cleanName)
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120) || `requisitioner-${Date.now()}`;
 
   await setDoc(
-    doc(firestore, CONTACTS, id || `requisitioner-${Date.now()}`),
+    doc(firestore, CONTACTS, id),
     {
       name: cleanName,
       email: cleanEmail,
@@ -140,18 +167,29 @@ export async function upsertRequisitionerContactCloud(input: {
 }
 
 export async function seedRequisitionerDirectory() {
+  // IMPORTANT:
+  // This is the validated Firestore instance.
   const firestore = requireFirestore();
 
-  // Firestore allows up to 500 writes in a batch; use 400 to leave room for future fields.
   for (let start = 0; start < REQUISITIONER_CONTACTS.length; start += 400) {
     const batch = writeBatch(firestore);
+
     const chunk = REQUISITIONER_CONTACTS.slice(start, start + 400);
 
     chunk.forEach((contact) => {
-      const id = normalizeRequisitionerName(contact.name)
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 120) || `requisitioner-${start}`;
+      const id =
+        normalizeRequisitionerName(contact.name)
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 120) || `requisitioner-${start}`;
+
+      // FIX:
+      // Before:
+      // doc(db, CONTACTS, id)
+      //
+      // Correct:
+      // doc(firestore, CONTACTS, id)
+
       batch.set(
         doc(firestore, CONTACTS, id),
         {
@@ -167,8 +205,12 @@ export async function seedRequisitionerDirectory() {
     await batch.commit();
   }
 
-  return { ok: true, count: REQUISITIONER_CONTACTS.length };
+  return {
+    ok: true,
+    count: REQUISITIONER_CONTACTS.length,
+  };
 }
 
 export const saveRequisitionerContacts = seedRequisitionerDirectory;
+
 export const getRequisitionerDirectory = getRequisitionerContacts;
