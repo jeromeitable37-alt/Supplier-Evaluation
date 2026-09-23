@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, BarChart3, CheckCircle2, ClipboardList, Clock3, DollarSign, FileText, RefreshCw, Truck, Users } from "lucide-react";
+import { subscribePurchaseOrders, type PurchaseOrder } from "../lib/firestore";
 
 type Rating = number | null;
 type Evaluation = {
@@ -18,6 +19,12 @@ const asDate = (v: unknown) => { const d = new Date(String(v || "")); return Num
 const ayOf = (v: unknown) => { const d = asDate(v); if (!d) return ""; const sy = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1; return `AY ${sy}–${sy + 1}`; };
 const fmtMoney = (v: number) => `Php ${v.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (v: unknown) => { const d = asDate(v); return d ? d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" }) : "—"; };
+
+function purchaseOrderTotal(po: PurchaseOrder) {
+  const direct = n(po.total);
+  if (direct > 0) return direct;
+  return (po.items || []).reduce((sum, item) => sum + (n(item.lineTotal) || n(item.qty) * n(item.unitPrice)), 0);
+}
 
 function totalForGroup(group: Group) {
   const matches = Array.isArray(group.matches) ? group.matches : [];
@@ -44,6 +51,14 @@ export default function AdvancedDashboard({ stats, recent, monthly, onScan, onNe
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncedAt, setSyncedAt] = useState("");
+  const [savedPOs, setSavedPOs] = useState<PurchaseOrder[]>([]);
+
+  useEffect(() => {
+    return subscribePurchaseOrders(
+      (items) => setSavedPOs(items || []),
+      (e) => setError((current) => current || e.message),
+    );
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -64,10 +79,32 @@ export default function AdvancedDashboard({ stats, recent, monthly, onScan, onNe
     return () => { alive = false; window.clearInterval(t); };
   }, []);
 
-  const pos = useMemo(() => groups.map((g) => {
-    const first = (g.matches || [])[0] || {};
-    return { ...first, poNumber: g.poNumber, supplier: first.supplier || "", buyerName: first.buyerName || "", total: totalForGroup(g), status: first.status || "Pending", expectedDate: first.expectedDate || "", actualDeliveryDate: first.actualDeliveryDate || "", orderDate: first.orderDate || "", prfNumber: first.prfNumber || "", requisitioner: first.requisitioner || "" };
-  }), [groups]);
+  const pos = useMemo(() => {
+    const savedByPo = new Map<string, PurchaseOrder>();
+    savedPOs.forEach((po) => {
+      const key = norm(po.poNumber);
+      if (key) savedByPo.set(key, po);
+    });
+    return groups.map((g) => {
+      const first = (g.matches || [])[0] || {};
+      const saved = savedByPo.get(norm(g.poNumber));
+      const groupTotal = totalForGroup(g);
+      const savedTotal = saved ? purchaseOrderTotal(saved) : 0;
+      return {
+        ...first,
+        poNumber: g.poNumber,
+        supplier: first.supplier || saved?.vendorName || "",
+        buyerName: first.buyerName || saved?.buyerName || "",
+        total: savedTotal > 0 ? savedTotal : groupTotal,
+        status: first.status || saved?.status || "Pending",
+        expectedDate: first.expectedDate || saved?.expectedDate || "",
+        actualDeliveryDate: first.actualDeliveryDate || saved?.actualDeliveryDate || "",
+        orderDate: first.orderDate || saved?.orderDate || "",
+        prfNumber: first.prfNumber || saved?.prfNumber || "",
+        requisitioner: first.requisitioner || saved?.requisitioner || "",
+      };
+    });
+  }, [groups, savedPOs]);
 
   const poStats = useMemo(() => {
     const totalValue = pos.reduce((s, p) => s + p.total, 0);

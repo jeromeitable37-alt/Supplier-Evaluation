@@ -298,3 +298,27 @@ select option{background:#fff;color:#14211a}
   .advanced-stat .stat-copy strong{font-size:23px}
 }
 
+
+
+/* PO storage workflow typography and spacing polish */
+.po-generator-modal-head h2{font-size:22px;line-height:1.12;letter-spacing:-.02em}
+.po-generator-modal-head p{font-size:10.5px;line-height:1.45;margin-top:4px}
+.po-generator-modal-body{gap:14px}
+.po-send-panel{padding:17px 18px}
+.po-send-panel>.section-kicker{margin-top:18px;margin-bottom:4px}
+.po-send-panel>.section-kicker:first-child{margin-top:0}
+.po-send-panel h3.po-workflow-title{font:800 17px/1.2 Manrope,sans-serif;margin:5px 0 9px;letter-spacing:-.01em;color:var(--text)}
+.po-send-panel .field{gap:5px;margin-bottom:10px}
+.po-send-panel .field>span{font-size:9.5px;line-height:1.35}
+.po-send-panel .field input{min-height:39px;font-size:10.5px}
+.po-send-panel>.po-pricing-note{font-size:10.5px;line-height:1.55;color:var(--text3);margin:0 0 10px}
+.po-directory-hint{margin:-1px 0 10px;font-size:10.5px;line-height:1.5;color:var(--text3)}
+.po-directory-hint a{color:var(--accent);font-weight:700;text-decoration:none}
+.po-directory-hint a:hover{text-decoration:underline}
+.po-action-stack{gap:9px;margin-top:13px}
+.po-action-stack .btn{min-height:40px;font-size:10.5px}
+.po-link-entry{margin-top:8px}
+.po-link-entry.amd{margin-top:8px}
+.po-source-note{margin-top:12px;padding:11px;font-size:8px;line-height:1.55}
+.workflow-second{margin-top:18px!important;margin-bottom:7px}
+@media(max-width:900px){.po-send-panel{padding:16px}.po-generator-modal-body{gap:12px}}

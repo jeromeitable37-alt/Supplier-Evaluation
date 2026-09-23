@@ -1,0 +1,10 @@
+V5 BUILD FIX
+
+Fixes the V4 TypeScript error:
+AdvancedReports.tsx: Property/function purchaseOrderTotal was referenced but not declared.
+
+The helper now reads the saved official PO total first, then falls back to item line totals / qty x unit price.
+This allows Dashboard and Reports to use the price extracted from the official uploaded PO stored in Firestore.
+
+PO Storage UI files are retained from V4.
+No spreadsheet prices are required.

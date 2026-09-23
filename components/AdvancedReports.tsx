@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, BarChart3, CalendarDays, CheckCircle2, Clock3, DollarSign, FileBarChart2, RefreshCw, Truck, Users } from "lucide-react";
-import { subscribeEvaluationLinks, type PublicEvaluationLink } from "../lib/firestore";
+import { subscribeEvaluationLinks, subscribePurchaseOrders, type PublicEvaluationLink, type PurchaseOrder } from "../lib/firestore";
 
 type Rating = number | null;
 type Evaluation = {
@@ -26,6 +26,12 @@ const avg=(xs:number[])=>xs.length?Math.round((xs.reduce((a,b)=>a+b,0)/xs.length
 const money=(v:number)=>`Php ${v.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const norm=(v:unknown)=>String(v||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 const fmtDate=(v:unknown)=>{const d=dateOf(v);return d?d.toLocaleDateString("en-PH",{year:"numeric",month:"short",day:"numeric"}):"—";};
+
+function purchaseOrderTotal(po: PurchaseOrder) {
+  const direct = n(po.total);
+  if (direct > 0) return direct;
+  return (po.items || []).reduce((sum, item) => sum + (n(item.lineTotal) || n(item.qty) * n(item.unitPrice)), 0);
+}
 
 function totalForGroup(group: Group) {
   const matches = Array.isArray(group.matches) ? group.matches : [];
@@ -53,12 +59,13 @@ function ScorePill({ value }: {value:number|null}) { return <span className={`an
 function MiniProgress({ value, max=5 }: {value:number|null;max?:number}) { const pct=value===null?0:Math.max(0,Math.min(100,value/max*100)); return <div className="analytics-progress"><i style={{width:`${pct}%`}}/></div>; }
 
 export default function AdvancedReports({ records }: { records: Evaluation[]; monthly: any[] }) {
-  const [groups,setGroups]=useState<Group[]>([]); const [links,setLinks]=useState<PublicEvaluationLink[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState("");
+  const [groups,setGroups]=useState<Group[]>([]); const [links,setLinks]=useState<PublicEvaluationLink[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState(""); const [savedPOs,setSavedPOs]=useState<PurchaseOrder[]>([]);
   const [ayFilter,setAyFilter]=useState("all"); const [poView,setPoView]=useState<"monthly"|"ay">("monthly"); const [vendorFilter,setVendorFilter]=useState("all");
   const ayLabels=useMemo(currentAYs,[]);
 
   useEffect(()=>{let alive=true;const load=async()=>{try{const res=await fetch("/api/po-lookup",{cache:"no-store"});const data=await res.json();if(!res.ok||!data?.ok)throw new Error(data?.message||"Could not load PO analytics data.");if(alive){setGroups(Array.isArray(data.poRecords)?data.poRecords:[]);setError("");}}catch(e){if(alive)setError(e instanceof Error?e.message:"Could not load PO analytics data.");}finally{if(alive)setLoading(false);}};void load();const t=window.setInterval(()=>void load(),60000);return()=>{alive=false;window.clearInterval(t);};},[]);
   useEffect(()=>subscribeEvaluationLinks(setLinks,(e)=>setError(e.message)),[]);
+  useEffect(()=>subscribePurchaseOrders((items)=>setSavedPOs(items||[]),(e)=>setError((current)=>current||e.message)),[]);
 
   const evalRows=useMemo(()=>records.filter(r=>r.finalRating>0),[records]);
   const vendors=useMemo(()=>Array.from(new Set(evalRows.map(r=>r.supplier).filter(Boolean))).sort(),[evalRows]);
@@ -73,7 +80,27 @@ export default function AdvancedReports({ records }: { records: Evaluation[]; mo
   const participation=useMemo(()=>ayLabels.map(ay=>{const rows=links.filter(l=>ayOf(l.createdAt)===ay);const roles:any={purchaser:[0,0],requisitioner:[0,0],amd_personnel:[0,0]};rows.forEach(l=>{const role=l.evaluatorRole||"requisitioner";if(roles[role]){roles[role][0]++;if(l.status==="submitted")roles[role][1]++;}});return{ay,roles};}),[links,ayLabels]);
   const completion=useMemo(()=>scorecard.map(v=>{const sent=links.filter(l=>String(l.po?.vendorName||"")===v.vendor).length;const sub=links.filter(l=>String(l.po?.vendorName||"")===v.vendor&&l.status==="submitted").length;return{vendor:v.vendor,sent,submitted:sub,rate:sent?Math.round(sub/sent*100):0};}).sort((a,b)=>b.rate-a.rate),[scorecard,links]);
 
-  const poRows=useMemo(()=>groups.map(g=>{const m=(g.matches||[])[0]||{};return{po:g.poNumber,supplier:String(m.supplier||""),total:totalForGroup(g),status:String(m.status||"Pending"),orderDate:m.orderDate||"",expectedDate:m.expectedDate||"",actualDate:m.actualDeliveryDate||"",prf:m.prfNumber||"",requisitioner:m.requisitioner||""};}),[groups]);
+  const poRows=useMemo(()=>{
+    const savedByPo=new Map<string,PurchaseOrder>();
+    savedPOs.forEach((po)=>{const key=norm(po.poNumber);if(key)savedByPo.set(key,po);});
+    return groups.map(g=>{
+      const m=(g.matches||[])[0]||{};
+      const saved=savedByPo.get(norm(g.poNumber));
+      const groupTotal=totalForGroup(g);
+      const savedTotal=saved?purchaseOrderTotal(saved):0;
+      return{
+        po:g.poNumber,
+        supplier:String(m.supplier||saved?.vendorName||""),
+        total:savedTotal>0?savedTotal:groupTotal,
+        status:String(m.status||saved?.status||"Pending"),
+        orderDate:m.orderDate||saved?.orderDate||"",
+        expectedDate:m.expectedDate||saved?.expectedDate||"",
+        actualDate:m.actualDeliveryDate||saved?.actualDeliveryDate||"",
+        prf:m.prfNumber||saved?.prfNumber||"",
+        requisitioner:m.requisitioner||saved?.requisitioner||""
+      };
+    });
+  },[groups,savedPOs]);
   const poStats=useMemo(()=>{let spend=0;const status:any={Pending:0,"Partial Delivery":0,Delivered:0};const overdue:any={};const lead:any={};for(const p of poRows){spend+=p.total;const s=p.status.toLowerCase();if(s.includes("partial"))status["Partial Delivery"]++;else if(s.includes("delivered")||s==="done")status.Delivered++;else status.Pending++;const exp=dateOf(p.expectedDate);if(exp){exp.setHours(0,0,0,0);const today=new Date();today.setHours(0,0,0,0);if(exp<today&&!s.includes("delivered")&&!s.includes("done")){const days=Math.floor((today.getTime()-exp.getTime())/86400000);overdue[p.supplier]=overdue[p.supplier]||[];overdue[p.supplier].push(days);}}const a=dateOf(p.orderDate),b=dateOf(p.actualDate);if(a&&b){const d=Math.round((b.getTime()-a.getTime())/86400000);if(d>=0&&d<365){lead[p.supplier]=lead[p.supplier]||[];lead[p.supplier].push(d);}}}const overdueRows=Object.entries(overdue).map(([vendor,arr])=>{const days=arr as number[];const avgDays=Math.round(days.reduce((a,b)=>a+b,0)/days.length);return{vendor,count:days.length,avgDays,severity:avgDays>30?"Critical":avgDays>14?"High":avgDays>7?"Medium":"Low"};}).sort((a,b)=>b.count-a.count||b.avgDays-a.avgDays);const leadRows=Object.entries(lead).map(([vendor,arr])=>{const days=arr as number[];const avgDays=Math.round(days.reduce((a,b)=>a+b,0)/days.length);return{vendor,days:avgDays,count:days.length,speed:avgDays<=7?"Fast":avgDays<=14?"Normal":avgDays<=30?"Slow":"Very Slow"};}).sort((a,b)=>a.days-b.days);return{spend,status,overdueRows,leadRows};},[poRows]);
   const spendMonthly=useMemo(()=>{const map:any={};poRows.forEach(p=>{const d=dateOf(p.orderDate);if(!d)return;const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;map[key]=(map[key]||0)+p.total;});return Object.keys(map).sort().map(k=>({label:k,value:map[k]}));},[poRows]);
   const spendAY=useMemo(()=>ayLabels.map(ay=>({label:ay,value:poRows.filter(p=>ayOf(p.orderDate)===ay).reduce((s,p)=>s+p.total,0)})),[poRows,ayLabels]);
