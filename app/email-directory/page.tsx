@@ -11,6 +11,7 @@ import {
   type EvaluationContact,
   type EvaluationContactRole,
 } from "../../lib/firestore";
+import { REQUISITIONER_CONTACTS } from "../../lib/requisitioner-directory";
 
 const roleOptions: Array<{ value: EvaluationContactRole; label: string }> = [
   { value: "purchaser", label: "Purchasing / Buyer" },
@@ -87,6 +88,15 @@ export default function EmailDirectoryPage() {
       return matchesQuery && matchesRole;
     });
   }, [contacts, query, roleFilter]);
+
+  const possibleRequisitioners = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return REQUISITIONER_CONTACTS.filter((contact) =>
+      !q ||
+      contact.name.toLowerCase().includes(q) ||
+      contact.email.toLowerCase().includes(q),
+    );
+  }, [query]);
 
   function openNew() {
     setEditing(null);
@@ -190,6 +200,35 @@ export default function EmailDirectoryPage() {
         </tr>)}
         {!filtered.length && <tr><td colSpan={6}><div className="empty"><div className="empty-icon">✉️</div><div className="empty-title">No saved evaluator contacts</div><div className="empty-sub">Add a contact here or enter a manual email inside PO Storage. Saved manual emails are remembered automatically.</div></div></td></tr>}
       </tbody></table></div>
+    </div>
+
+    <div className="panel possible-requisitioner-panel">
+      <div className="panel-head">
+        <div>
+          <div className="section-kicker">POSSIBLE REQUISITIONERS</div>
+          <h2>{REQUISITIONER_CONTACTS.length.toLocaleString()} requisitioner directory entries</h2>
+          <p>
+            Imported from the Requisitioner Details source. These contacts are used as a requisitioner fallback only.
+            Existing Purchasing / Buyer and AMD / Employee contacts remain in their existing directories.
+          </p>
+        </div>
+        <Users size={18} className="muted-icon"/>
+      </div>
+      <div className="table-wrap possible-requisitioner-table-wrap">
+        <table>
+          <thead><tr><th>Full name</th><th>Email address</th><th>Source</th></tr></thead>
+          <tbody>
+            {possibleRequisitioners.map((contact, index) => (
+              <tr key={`${contact.name}-${contact.email}-${index}`}>
+                <td><b>{contact.name}</b></td>
+                <td><a href={`mailto:${contact.email}`} style={{ fontWeight: 700 }}>{contact.email}</a></td>
+                <td><span className="pill blue">Possible Requisitioner</span></td>
+              </tr>
+            ))}
+            {!possibleRequisitioners.length && <tr><td colSpan={3}><div className="empty"><div className="empty-icon">🔎</div><div className="empty-title">No matching requisitioners</div><div className="empty-sub">Try another name or email.</div></div></td></tr>}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     {formOpen && <div className="modal-backdrop"><div className="detail-modal" style={{ maxWidth: 720 }}>

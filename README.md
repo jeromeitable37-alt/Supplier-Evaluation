@@ -1,18 +1,36 @@
-# Purchasing Supplier Evaluation — V8 Email Directory Source Fix
+# Requisitioner Directory + Email Routing Fix
 
-This patch combines the V6 PO Storage layout fix with the Email Directory synchronization/source behavior requested.
+This patch adds the full possible-requisitioner directory from the supplied
+`Requisitioner Details` sheet and fixes the nullable Firestore `db` TypeScript
+error.
 
-## What changed
-- PO Storage automatically imports the full contact list returned by the configured Employee / Requisitioner Google Sheet into the existing Firestore Email Directory once per page load.
-- Imported contacts are stored as reusable evaluator contacts for Purchasing / Buyer, Requisitioner, and AMD / Received by lookup.
-- During evaluation-link creation and email sending, the system uses the Email Directory as the evaluator-email source.
-- If a user manually types an email, the system saves that address into the Email Directory first, then resolves the address from the directory before creating the link or sending the email.
-- Existing PO, Gemini extraction, Cloudinary document, evaluation-link, and email-send functionality is preserved.
-- The visible evaluator-email labels now say "from Email Directory".
+Imported records: 901
 
-## Files
-- `components/PurchaseOrderGenerator.tsx`
-- `app/globals.css` (included from V6 so this patch can replace the prior V6 folder safely)
+Important source separation:
+- Purchasing / Buyer: keep using the existing Buyer / evaluator contacts.
+- AMD / Received by: keep using the existing Employee / AMD contacts already maintained in the system.
+- Requisitioner: use this full possible-requisitioner directory as a fallback.
 
-## Source-list note
-The directory is populated from the same configured Employee / Requisitioner source that the current system already uses. This avoids creating a second hardcoded copy of the employee list and lets future spreadsheet additions flow into the system.
+Files:
+- lib/requisitioner-directory-data.ts
+- lib/requisitioner-directory.ts
+- components/PurchaseOrderGenerator.tsx
+- app/email-directory/page.tsx
+- app/globals.css
+
+The Email Directory page now has a read-only "Possible Requisitioners" section
+showing the full imported list. The PO Storage requisitioner picker also uses
+this directory, so a requisitioner can be found even when the live API/PO record
+does not already contain the email.
+
+The send flow still resolves the three evaluator roles separately:
+1. Purchasing / Buyer -> existing purchaser directory / buyer data
+2. Requisitioner -> this possible-requisitioner directory
+3. AMD / Received by -> existing AMD / Employee directory
+
+Do not run `git init`.
+
+After copying the files:
+    npm.cmd run build
+
+Only commit after the build passes.
