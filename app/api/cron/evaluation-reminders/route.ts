@@ -1,5 +1,6 @@
 import { createSign } from "node:crypto";
 import { NextResponse } from "next/server";
+import { officialPoAttachmentName } from "../../../../lib/poAttachmentName";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -239,9 +240,12 @@ async function sendPendingLinkEmail(
       try { return new URL(String(item?.url || "")).protocol === "https:"; }
       catch { return false; }
     })
-    .map((item: any) => ({
+    .map((item: any, index: number) => ({
       url: String(item.url),
-      name: String(item.name || poNumber + ".pdf").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(-160),
+      name: officialPoAttachmentName({
+        poNumber, index, originalName: item.name,
+        mimeType: item.mimeType, url: item.url,
+      }),
       mimeType: item.mimeType ? String(item.mimeType) : undefined,
     }));
   if (!attachments.length) throw new Error("No stored official PO document.");
@@ -253,10 +257,14 @@ async function sendPendingLinkEmail(
   const greeting = isReminder
     ? "This is a friendly reminder to complete your pending supplier evaluation."
     : "Please review the official Purchase Order and complete your supplier evaluation.";
-  const text = "Hello " + name + ",\n\n" + greeting +
-    "\n\nPurchase Order: " + poNumber + "\nSupplier: " + String(po.vendorName || "—") +
-    "\n\nOpen and complete evaluation: " + evalUrl +
-    "\n\nThe official Purchase Order is attached. This email stops after your evaluation is submitted.";
+  const text = [
+    "Hello " + name + ",",
+    greeting,
+    "PO number: " + poNumber,
+    "Supplier: " + String(po.vendorName || "—"),
+    "Open PO & Complete Evaluation: " + evalUrl,
+    "The official PO is attached. Reminders stop after you submit the form.",
+  ].join("\n\n");
   const html = '<!doctype html><html><body style="background:#f5f4f9;padding:24px;font-family:Arial,sans-serif;color:#20202b">' +
     '<div style="max-width:640px;margin:auto;background:white;border:1px solid #e5e5eb;border-radius:14px;overflow:hidden">' +
     '<div style="background:#4f247c;color:white;padding:24px;font-size:20px;font-weight:700">' + escapeHtml(title) + '</div>' +
