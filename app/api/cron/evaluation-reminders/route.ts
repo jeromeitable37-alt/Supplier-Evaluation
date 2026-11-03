@@ -1,6 +1,5 @@
 import { createSign } from "node:crypto";
 import { NextResponse } from "next/server";
-import { buildSupplierEvaluationEmail } from "../../../../lib/evaluationEmailTemplate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -173,6 +172,14 @@ function isEmail(value: unknown): value is string {
   return typeof value === "string" &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => {
+    const escapes: Record<string, string> = {
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    };
+    return escapes[char];
+  });
+}
 function manilaDay(date: Date) {
   return new Date(date.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
@@ -241,15 +248,24 @@ async function sendPendingLinkEmail(
   const role = roleName(String(link.evaluatorRole || "requisitioner"));
   const name = String(link.evaluatorName || "Evaluator");
   const evalUrl = origin.replace(/\/$/, "") + "/evaluate/" + encodeURIComponent(token);
-  const { subject, html, text } = buildSupplierEvaluationEmail({
-    recipientName: name,
-    roleLabel: role + " Evaluation",
-    poNumber,
-    supplierName: String(po.vendorName || ""),
-    evaluationUrl: evalUrl,
-    schoolName: String(link.workspaceName || "Southville International School and Colleges"),
-    isReminder,
-  });
+  const title = (isReminder ? "Reminder: " : "") + role + " Supplier Evaluation";
+  const subject = (isReminder ? "Reminder | " : "") + "Supplier Evaluation Request | PO " + poNumber.replace(/[\r\n]/g, " ") + " | " + role;
+  const greeting = isReminder
+    ? "This is a friendly reminder to complete your pending supplier evaluation."
+    : "Please review the official Purchase Order and complete your supplier evaluation.";
+  const text = "Hello " + name + ",\n\n" + greeting +
+    "\n\nPurchase Order: " + poNumber + "\nSupplier: " + String(po.vendorName || "—") +
+    "\n\nOpen and complete evaluation: " + evalUrl +
+    "\n\nThe official Purchase Order is attached. This email stops after your evaluation is submitted.";
+  const html = '<!doctype html><html><body style="background:#f5f4f9;padding:24px;font-family:Arial,sans-serif;color:#20202b">' +
+    '<div style="max-width:640px;margin:auto;background:white;border:1px solid #e5e5eb;border-radius:14px;overflow:hidden">' +
+    '<div style="background:#4f247c;color:white;padding:24px;font-size:20px;font-weight:700">' + escapeHtml(title) + '</div>' +
+    '<div style="padding:26px"><p>Hello <strong>' + escapeHtml(name) + '</strong>,</p><p>' + escapeHtml(greeting) + '</p>' +
+    '<p><strong>PO Number:</strong> ' + escapeHtml(poNumber) + '<br><strong>Supplier:</strong> ' + escapeHtml(po.vendorName || "—") + '</p>' +
+    '<p style="margin:26px 0"><a style="padding:12px 20px;background:#287849;border-radius:8px;color:white;text-decoration:none;font-weight:700" href="' +
+    escapeHtml(evalUrl) + '">Open PO &amp; Complete Evaluation</a></p>' +
+    '<p style="color:#697284;font-size:12px">The official PO is attached. Reminders stop after you submit the form. This evaluation link is unique to the recipient.</p>' +
+    '</div></div></body></html>';
   await sendViaAppsScript({ to: recipient, subject, html, text, attachments });
   return recipient;
 }
