@@ -286,11 +286,18 @@ export async function GET(request: Request) {
     const account = getCredentials();
     const accessToken = await googleAccessToken(account);
     const allDocs = await listEvaluationLinks(account.project_id, accessToken);
+    const records = allDocs.map((doc) => ({ doc, link: fieldsToObject(doc.fields) }));
+    const roleKey = (link: EvaluationLink) =>
+      String(link.po?.poNumber || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "") +
+      "::" + String(link.evaluatorRole || "requisitioner");
+    const completedRoles = new Set(
+      records.filter(({ link }) => link.status === "submitted").map(({ link }) => roleKey(link)),
+    );
     const day = manilaDay(new Date());
-    const pending = allDocs
-      .map((doc) => ({ doc, link: fieldsToObject(doc.fields) }))
+    const pending = records
       .filter(({ link }) =>
         link.status === "pending" &&
+        !completedRoles.has(roleKey(link)) &&
         link.remindersEnabled !== false &&
         link.lastReminderAttemptDay !== day &&
         dateInManilaDay(link.lastEmailSentAt || link.emailSentAt) !== day &&
@@ -302,10 +309,18 @@ export async function GET(request: Request) {
         String(b.link.lastEmailSentAt || b.link.createdAt || ""),
       ));
 
+    // One email per PO and evaluator role, even if older records contain duplicate pending links.
+    const seenRoles = new Set<string>();
+    const uniquePending = pending.filter(({ link }) => {
+      const key = roleKey(link);
+      if (seenRoles.has(key)) return false;
+      seenRoles.add(key);
+      return true;
+    });
     const rawLimit = Number(process.env.MAX_DAILY_EVALUATION_EMAILS || 100);
     const maxDaily = Number.isFinite(rawLimit) ? Math.min(250, Math.max(1, Math.trunc(rawLimit))) : 100;
-    const queue = pending.slice(0, maxDaily);
-    const stats = { checked: allDocs.length, pending: pending.length, attempted: 0, sent: 0, skipped: 0, failed: 0 };
+    const queue = uniquePending.slice(0, maxDaily);
+    const stats = { checked: allDocs.length, pending: uniquePending.length, attempted: 0, sent: 0, skipped: 0, failed: 0 };
     const failures: string[] = [];
     let cursor = 0;
 
@@ -315,13 +330,14 @@ export async function GET(request: Request) {
         const link = item.link;
         const token = item.doc.name.split("/").pop() || "";
         if (!token) { stats.skipped++; continue; }
+        let claimed: FirestoreDocument | null = null;
         try {
           if (await submittedEvaluationExists(account.project_id, accessToken, token)) {
             stats.skipped++;
             continue;
           }
           // Atomic, updateTime-guarded claim prevents duplicate emails from overlapping cron runs.
-          const claimed = await patchDocument(item.doc, accessToken, { lastReminderAttemptDay: day }, item.doc.updateTime);
+          claimed = await patchDocument(item.doc, accessToken, { lastReminderAttemptDay: day }, item.doc.updateTime);
           stats.attempted++;
           const isReminder = Boolean(link.emailSentAt);
           const recipient = await sendPendingLinkEmail(link, token, new URL(request.url).origin, isReminder);
@@ -343,7 +359,8 @@ export async function GET(request: Request) {
           // Do not expose recipient emails or evaluation access tokens in public logs.
           failures.push("PO " + String(link.po?.poNumber || "unknown") + ": " + message.slice(0, 180));
           try {
-            // If the atomic claim didn't succeed, do not change another process's state.
+            // Only the worker that claimed this link can write its failure detail.
+            if (!claimed) continue;
             const recent = await firestoreRequest("https://firestore.googleapis.com/v1/" + item.doc.name, accessToken);
             if (recent.ok) {
               const latest = await recent.json() as FirestoreDocument;
@@ -356,7 +373,7 @@ export async function GET(request: Request) {
       }
     };
     await Promise.all(Array.from({ length: Math.min(queue.length, 4) }, () => worker()));
-    return NextResponse.json({ ok: true, runDay: day, ...stats, deferred: pending.length - queue.length, errors: failures.slice(0, 12) });
+    return NextResponse.json({ ok: true, runDay: day, ...stats, deferred: uniquePending.length - queue.length, errors: failures.slice(0, 12) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Daily email job failed.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
