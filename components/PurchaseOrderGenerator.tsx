@@ -329,6 +329,19 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const getPendingLink = (poNumber: string, role: "purchaser" | "requisitioner" | "amd_personnel") =>
     pendingLinkByRole.get(`${normalizeKey(poNumber)}::${role}`);
 
+  const hasCompletedRole = (poNumber: string, role: "purchaser" | "requisitioner" | "amd_personnel") => {
+    const key = normalizeKey(poNumber);
+    if (!key) return false;
+    return evaluationLinks.some((item) =>
+      item.status === "submitted" &&
+      normalizeKey(item.po?.poNumber || "") === key &&
+      (item.evaluatorRole || "requisitioner") === role
+    ) || evaluationRows.some((item) =>
+      normalizeKey(item.poNumber) === key &&
+      String(item.evaluatorRole || "").toLowerCase() === role
+    );
+  };
+
   const matchedPrfKeys = useMemo(() => {
     const keys = new Set<string>();
     poRecords.forEach((group) => (group.matches || []).forEach((match) => {
@@ -883,7 +896,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         rememberContact("requisitioner", selectedPo.requisitioner, reqEmail, selectedPo.department),
         rememberContact("amd_personnel", selectedPo.receivedBy, amdAuto, selectedPo.department),
       ]);
-      if (selectedPo.buyerName) {
+      if (selectedPo.buyerName && !hasCompletedRole(selectedPo.poNumber, "purchaser")) {
         const existingPurchaser = getPendingLink(selectedPo.poNumber, "purchaser");
         if (existingPurchaser) {
           nextLinks.purchaser = `${window.location.origin}/evaluate/${existingPurchaser.token}`;
@@ -901,7 +914,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
           nextLinks.purchaser = result.url;
         }
       }
-      if (selectedPo.requisitioner) {
+      if (selectedPo.requisitioner && !hasCompletedRole(selectedPo.poNumber, "requisitioner")) {
         const existingReq = getPendingLink(selectedPo.poNumber, "requisitioner");
         if (existingReq) nextLinks.requisitioner = `${window.location.origin}/evaluate/${existingReq.token}`;
         else if (reqEmail) {
@@ -918,7 +931,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
           nextLinks.requisitioner = result.url;
         }
       }
-      if (selectedPo.receivedBy) {
+      if (selectedPo.receivedBy && !hasCompletedRole(selectedPo.poNumber, "amd_personnel")) {
         const existingAmd = getPendingLink(selectedPo.poNumber, "amd_personnel");
         if (existingAmd) nextLinks.amd_personnel = `${window.location.origin}/evaluate/${existingAmd.token}`;
         else if (amdAuto) {
@@ -951,6 +964,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel") => {
     if (!selectedPo?.documentUrl) throw new Error("Store the official PO first. The stored Cloudinary document will be attached automatically.");
     if (!selectedPo.poNumber.trim()) throw new Error("Enter the PO number before sending the evaluation request.");
+    if (hasCompletedRole(selectedPo.poNumber, role)) throw new Error("This evaluator already submitted for this Purchase Order.");
     const reqEmail = resolveReqEmail();
     const targetEmail = role === "purchaser" ? resolveBuyerEmail() : role === "requisitioner" ? reqEmail : resolveAmdEmail();
     const targetName = role === "purchaser" ? selectedPo.buyerName : role === "requisitioner" ? selectedPo.requisitioner : selectedPo.receivedBy;
@@ -1023,9 +1037,9 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     setSending(true);
     try {
       const jobs: Promise<any>[] = [];
-      if (resolveBuyerEmail() && selectedPo.buyerName) jobs.push(sendOneEvaluation("purchaser"));
-      if (resolveReqEmail() && selectedPo.requisitioner) jobs.push(sendOneEvaluation("requisitioner"));
-      if (resolveAmdEmail() && selectedPo.receivedBy) jobs.push(sendOneEvaluation("amd_personnel"));
+      if (resolveBuyerEmail() && selectedPo.buyerName && !hasCompletedRole(selectedPo.poNumber, "purchaser")) jobs.push(sendOneEvaluation("purchaser"));
+      if (resolveReqEmail() && selectedPo.requisitioner && !hasCompletedRole(selectedPo.poNumber, "requisitioner")) jobs.push(sendOneEvaluation("requisitioner"));
+      if (resolveAmdEmail() && selectedPo.receivedBy && !hasCompletedRole(selectedPo.poNumber, "amd_personnel")) jobs.push(sendOneEvaluation("amd_personnel"));
       if (!jobs.length) {
         const missing = selectedPo.receivedBy ? "Enter at least one valid Requisitioner or AMD/Received by email." : "Enter a valid Requisitioner email. AMD will be available when a Received by person is set.";
         throw new Error(missing);
