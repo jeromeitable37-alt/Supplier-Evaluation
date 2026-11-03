@@ -225,7 +225,7 @@ export async function POST(request: Request) {
       `Delivery lead time: ${leadTimeText}`,
       `Open PO & Complete Evaluation: ${evaluationUrl}`,
       "The official PO is attached. This evaluation link can be submitted once.",
-    ].join("\\n\\n");
+    ].join("\n\n");
 
     const sent = await sendViaAppsScript({ to: resolvedTo, subject, html, text, attachments });
     return NextResponse.json({
