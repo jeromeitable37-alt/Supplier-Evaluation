@@ -475,6 +475,10 @@ export type PublicEvaluationLink = {
   buyerEmail?: string;
   createdAt: string;
   submittedAt?: string;
+  emailSentAt?: string;
+  lastEmailSentAt?: string;
+  reminderCount?: number;
+  lastReminderAt?: string;
 };
 
 export function subscribePurchaseOrders(callback: (items: PurchaseOrder[]) => void, onError?: (error: Error) => void): Unsubscribe {
