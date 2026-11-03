@@ -126,7 +126,7 @@ async function sendViaAppsScript(input: {
       subject: input.subject,
       htmlBody: input.html,
       textBody: input.text,
-      senderName: "Purchasing Management System",
+      senderName: "Southville Supplier Evaluation",
       attachments: input.attachments,
     }),
   });
