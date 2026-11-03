@@ -603,6 +603,22 @@ export async function createEvaluationLinkCloud(input: {
   return { token, url: `${origin}/evaluate/${token}`, record: link };
 }
 
+export async function markEvaluationEmailSentCloud(token: string, recipient: string) {
+  const firestore = requireDb();
+  await signInToFirebase();
+  const linkRef = doc(firestore, EVALUATION_LINKS, token);
+  const existing = await getDoc(linkRef);
+  if (!existing.exists()) throw new Error("Evaluation link record not found.");
+  if (existing.data().status !== "pending") return;
+  const now = new Date().toISOString();
+  await setDoc(linkRef, {
+    emailSentAt: existing.data().emailSentAt || now,
+    lastEmailSentAt: now,
+    lastEmailRecipient: recipient.trim().toLowerCase(),
+    emailSendStatus: "sent",
+  }, { merge: true });
+}
+
 export async function getPublicEvaluationLink(token: string): Promise<PublicEvaluationLink | null> {
   const firestore = requireDb();
   const snap = await getDoc(doc(firestore, EVALUATION_LINKS, token));
