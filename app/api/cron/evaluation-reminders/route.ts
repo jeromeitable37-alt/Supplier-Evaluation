@@ -294,10 +294,16 @@ export async function GET(request: Request) {
       records.filter(({ link }) => link.status === "submitted").map(({ link }) => roleKey(link)),
     );
     const day = manilaDay(new Date());
+    // A duplicate pending link must not trigger another email if the same role was emailed today.
+    const emailedTodayRoles = new Set(records
+      .filter(({ link }) => link.lastReminderAttemptDay === day ||
+        dateInManilaDay(link.lastEmailSentAt || link.emailSentAt) === day)
+      .map(({ link }) => roleKey(link)));
     const pending = records
       .filter(({ link }) =>
         link.status === "pending" &&
         !completedRoles.has(roleKey(link)) &&
+        !emailedTodayRoles.has(roleKey(link)) &&
         link.remindersEnabled !== false &&
         link.lastReminderAttemptDay !== day &&
         dateInManilaDay(link.lastEmailSentAt || link.emailSentAt) !== day &&
