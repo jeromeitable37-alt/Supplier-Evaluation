@@ -108,9 +108,9 @@ async function sendViaAppsScript(input: {
   attachments: Array<{ url: string; name: string; mimeType?: string }>;
 }) {
   const url = String(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL || "").trim();
-  const secret = String(process.env.GOOGLE_APPS_SCRIPT_SECRET || "").trim();
+  const secret = String(process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET || "").trim();
   if (!url || !secret) {
-    throw new Error("Google Apps Script email is not configured. Add GOOGLE_APPS_SCRIPT_EMAIL_URL and GOOGLE_APPS_SCRIPT_SECRET in Vercel.");
+    throw new Error("Google Apps Script email is not configured. Add GOOGLE_APPS_SCRIPT_EMAIL_URL and PMS_WEBHOOK_SECRET in Vercel.");
   }
 
   const response = await fetch(url, {
