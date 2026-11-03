@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   createEvaluationLinkCloud,
+  markEvaluationEmailSentCloud,
   savePurchaseOrderCloud,
   subscribeEvaluationContacts,
   upsertEvaluationContactCloud,
@@ -1001,7 +1002,16 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     });
     const data = await response.json();
     if (!response.ok || !data?.ok) throw new Error(data?.message || "Email service rejected the request.");
-    return { role, recipient: data?.recipient || targetEmail, attachmentCount: data?.attachmentCount || 1, link };
+    let trackingWarning = "";
+    try {
+      const token = new URL(link, window.location.origin).pathname.split("/").filter(Boolean).pop() || "";
+      if (!token) throw new Error("Missing evaluation link token.");
+      await markEvaluationEmailSentCloud(token, data?.recipient || targetEmail);
+    } catch (error) {
+      trackingWarning = "Email accepted but could not update send tracking: " +
+        (error instanceof Error ? error.message : String(error));
+    }
+    return { role, recipient: data?.recipient || targetEmail, attachmentCount: data?.attachmentCount || 1, link, trackingWarning };
   };
 
   const sendEmail = async () => {
@@ -1023,7 +1033,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       const results = await Promise.allSettled(jobs);
       const sent = results.filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled").map((r) => r.value);
       const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-      if (sent.length) onNotify(sent.map((item) => `${item.role === "purchaser" ? "Purchasing / Buyer" : item.role === "amd_personnel" ? "AMD" : "Requisitioner"} sent to ${item.recipient} · ${item.attachmentCount} PO file${item.attachmentCount > 1 ? "s" : ""}.`).join(" "));
+      if (sent.length) onNotify(sent.map((item) => `${item.role === "purchaser" ? "Purchasing / Buyer" : item.role === "amd_personnel" ? "AMD" : "Requisitioner"} sent to ${item.recipient} · ${item.attachmentCount} PO file${item.attachmentCount > 1 ? "s" : ""}. ${item.trackingWarning || ""}`).join(" "));
       if (failed.length) onNotify(failed.map((item) => item.reason instanceof Error ? item.reason.message : String(item.reason)).join(" "));
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "Could not send the evaluation requests.");
