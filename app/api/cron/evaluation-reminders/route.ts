@@ -200,7 +200,7 @@ async function sendViaAppsScript(input: {
   attachments: { url: string; name: string; mimeType?: string }[];
 }) {
   const url = process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL;
-  const secret = process.env.GOOGLE_APPS_SCRIPT_SECRET;
+  const secret = process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET;
   if (!url || !secret) throw new Error("Google Apps Script email variables are missing.");
   const response = await fetch(url, {
     method: "POST",
@@ -286,7 +286,7 @@ export async function GET(request: Request) {
   }
 
   // Fail closed until the production email sender and server credentials are configured.
-  if (!process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL || !process.env.GOOGLE_APPS_SCRIPT_SECRET) {
+  if (!process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL || !(process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET)) {
     return NextResponse.json({ ok: false, error: "Google Apps Script email variables are missing." }, { status: 503 });
   }
 
