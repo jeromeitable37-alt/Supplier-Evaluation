@@ -210,7 +210,7 @@ async function sendViaAppsScript(input: {
       subject: input.subject,
       textBody: input.text,
       htmlBody: input.html,
-      senderName: "Purchasing Management System",
+      senderName: "Southville Supplier Evaluation",
       attachments: input.attachments,
     }),
     cache: "no-store",
