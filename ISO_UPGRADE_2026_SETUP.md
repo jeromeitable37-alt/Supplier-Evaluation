@@ -64,6 +64,52 @@ The ven.gs file is empty. Keep the existing Code.gs untouched.**
 **This branch is not deployed to Production.** No live email sender, Drive
 storage, historical Sheet data, or user permissions were changed.
 
+## PO Drive next stage — permission test passed, server code staged
+
+**Confirmed from Apps Script execution log (Nov 6, 2026):**
+`siscTestPoDriveWriteAccess` returned `folderRead=verified`,
+`folderWrite=verified`, and `temporaryFileCleanup=trashed`. This is an
+authorization test only; the website has **not** switched to Drive.
+
+New files on the draft branch:
+- `scripts/southville-po-drive-storage.gs`: school Apps Script handlers for
+  private PO upload and authorized preview, restricted to the configured folder.
+- `scripts/southville-evaluation-webhook.gs`: updated dispatcher for
+  `upload_po`, `get_po_file`, existing `send_email`, and `sync_evaluation`.
+- `lib/server/schoolPoAuth.ts`: validates Firebase ID token with Google's
+  identity service and checks the active admin role against Firestore.
+- `app/api/po-drive/route.ts`: server-side multipart PO upload endpoint.
+- `app/api/po-drive-file/route.ts`: admin-authenticated PO preview proxy.
+
+**Apps Script owner next steps (non-destructive):**
+1. Open **Extensions → Apps Script** in the official school spreadsheet.
+2. Keep `Code.gs`, `SupplierEvaluationISO.gs` and `PoDriveTest.gs` as-is.
+3. Create **PoDriveStorage.gs**, paste
+   `scripts/southville-po-drive-storage.gs` from the draft branch, then Save.
+4. Replace only the project’s previously created `ven.gs` webhook content with
+   the newer `scripts/southville-evaluation-webhook.gs`. The manual evaluation
+   code in `Code.gs` must remain unchanged.
+5. Run **siscDriveCheckFolderSetup**. It is read-only and verifies that the
+   PO Drive folder does not grant broad anyone-link permission. If it fails,
+   coordinate a permission change with Sir GC before enabling storage.
+6. Do not deploy the web app yet. Confirm that manual email sending, scheduled
+   reminders, private PO previews and upload error handling work first.
+7. The new website API routes are explicitly disabled until the **server-only**
+   Vercel env flag `PO_DRIVE_UPLOAD_ENABLED=true` is set on an approved
+   deployment with a working school Apps Script URL and matching secret.
+
+**Pilot limitations:** 8 MiB per file through Apps Script JSON/base64, PDF/JPEG/
+PNG/WebP formats only; admin-only access initially. A direct resumable Google
+Drive API path is necessary before supporting larger files, and an authorized
+UI cutover is needed to replace Cloudinary. Existing PO attachments are never
+removed in this stage.
+
+**Confidentiality:** The official spreadsheet still has anyone-with-link
+viewer access. ISO auto-sync remains paused; this folder test does not change
+that. Drive fileIDs are private metadata, not public download links.
+Do not enable the PO Drive endpoint or store real POs if the PO folder has
+anyone-with-link permissions.
+
 ## School-controlled Google Drive PO archive
 
 - Sir GC's authorized Southville Drive can hold PO attachment files. Prefer
