@@ -26,6 +26,9 @@ function siscDriveFolder_() {
   if (!/^[A-Za-z0-9_-]{15,150}$/.test(id)) {
     throw new Error('Configure an authorized PO_DRIVE_FOLDER_ID first.');
   }
+  if (siscIsoCheckWorkbookVisibility_(id).anyoneCanRead) {
+    throw new Error('The PO folder allows anyone-with-link access. Restrict sharing before storing confidential PO files.');
+  }
   return DriveApp.getFolderById(id);
 }
 
@@ -53,7 +56,7 @@ function siscDriveCheckMagic_(bytes, mime) {
       throw new Error('File contents do not match a PNG.');
     }
   } else if (mime === 'image/webp') {
-    var str = String.fromCharCode.apply(null, bytes.slice(0, 4).map(u));
+    var str = String.fromCharCode.apply(null, bytes.slice(0, 4).map(function(x) { return x & 255; }));
     var fmt = String.fromCharCode.apply(null, bytes.slice(8, 12).map(function(x) { return x & 255; }));
     if (str !== 'RIFF' || fmt !== 'WEBP') {
       throw new Error('File contents do not match a WebP.');
