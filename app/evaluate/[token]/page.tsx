@@ -50,6 +50,10 @@ export default function EvaluationPage() {
   const [error, setError] = useState("");
   const [scores, setScores] = useState<Record<string, number>>({});
   const [comments, setComments] = useState("");
+  const [ratingRemarks, setRatingRemarks] = useState<Record<string, string>>({});
+  const [satisfaction, setSatisfaction] = useState({ timeliness: 0, accuracy: 0 });
+  const [satisfactionComments, setSatisfactionComments] = useState("");
+  const [syncWarning, setSyncWarning] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -88,10 +92,37 @@ export default function EvaluationPage() {
       setSubmitError(`Please rate all ${activeCriteria.length} criteria before submitting.`);
       return;
     }
+    const missingReason = activeCriteria.find(([id]) => scores[id] < 4 && !ratingRemarks[id]?.trim());
+    if (missingReason) {
+      setSubmitError("Please explain your rating below 4 for: " + missingReason[1] + ".");
+      return;
+    }
+    if (evaluatorRole === "requisitioner" && (!satisfaction.timeliness || !satisfaction.accuracy)) {
+      setSubmitError("Please rate Purchasing's timeliness and accuracy before submitting.");
+      return;
+    }
     setSubmitting(true);
     try {
-      await createPublicRequisitionerEvaluation({ token, link, scores, comments, overall });
+      await createPublicRequisitionerEvaluation({
+        token, link, scores, comments, overall, ratingRemarks,
+        customerSatisfaction: evaluatorRole === "requisitioner" ? {
+          timeliness: satisfaction.timeliness,
+          accuracy: satisfaction.accuracy,
+          comments: satisfactionComments,
+          evaluatedBy: evaluatorName,
+        } : undefined,
+      });
       setSubmitted(true);
+      // Firestore is authoritative; if the sheet is offline, the response remains saved.
+      try {
+        const response = await fetch("/api/sync-evaluation", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        if (!response.ok) setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+      } catch {
+        setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+      }
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Could not submit your evaluation.");
     } finally {
@@ -152,7 +183,35 @@ export default function EvaluationPage() {
       <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: {displayTotal > 0 ? `Php ${displayTotal.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</b></div>
     </section>
 
-    {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p></section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>PLEASE RATE THE DELIVERED PURCHASE</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} supplier evaluation</h2><p>Please rate each criterion from 1 (Poor) to 5 (Excellent). Your responses are saved with this purchase transaction under your evaluator role.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}</div>)}</section><section className="public-comments"><label>Additional comments <span>(optional)</span><textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Please add any comments about the delivery, quality, or supplier service."/></label><div className="public-submit-row"><div><span>Current average</span><strong>{overall ? overall.toFixed(1) : "—"} / 5</strong></div><button className="btn primary" disabled={submitting} onClick={() => void submit()}>{submitting ? "Submitting…" : "Submit Evaluation"}</button></div>{submitError && <div className="public-eval-error">{submitError}</div>}</section></>}
+    {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p>
+    {syncWarning && <p style={{ color: "#9a3412", fontSize: 12 }}>{syncWarning}</p>}</section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>PLEASE RATE THE DELIVERED PURCHASE</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} supplier evaluation</h2><p>Please rate each criterion from 1 (Poor) to 5 (Excellent). Your responses are saved with this purchase transaction under your evaluator role.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}
+        {scores[id] > 0 && scores[id] < 4 && <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#334155" }}>
+          Reason for rating below 4 (required)
+          <textarea style={{ width: "100%", marginTop: 6, minHeight: 70, border: "1px solid #cbd5e1", borderRadius: 8, padding: 10 }}
+            value={ratingRemarks[id] || ""}
+            onChange={(e) => setRatingRemarks((previous) => ({ ...previous, [id]: e.target.value }))}
+            placeholder="Please explain what happened for this criterion." />
+        </label>}
+      </div>)}</section>
+      {evaluatorRole === "requisitioner" && <section className="public-eval-criteria" style={{ marginTop: 22 }}>
+        <div className="public-criterion">
+          <div><h2 style={{ fontSize: 19, margin: "0 0 8px" }}>Customer Satisfaction — Purchasing Services</h2>
+            <p>This separate section rates the Purchasing Office, NOT the supplier. Your name is recorded for reference; the official printout retains signature lines for signing.</p></div>
+        </div>
+        {([["timeliness", "Timeliness of Purchasing service"], ["accuracy", "Accuracy of Purchasing service"]] as const).map(([key, label]) =>
+          <div className="public-criterion" key={key}>
+            <div><h3>{label}</h3><p>Please rate 1 (Poor) to 5 (Highest).</p></div>
+            <div className="public-stars">{[1,2,3,4,5].map((n) =>
+              <button type="button" key={n} className={satisfaction[key] >= n ? "active" : ""}
+                onClick={() => setSatisfaction((previous) => ({ ...previous, [key]: n }))}
+                aria-label={label + ": " + n + " of 5"}><Star size={27} fill="currentColor"/></button>
+            )}</div><small>{satisfaction[key] ? satisfaction[key] + " / 5" : "Not rated"}</small>
+          </div>)}
+        <div className="public-comments"><label>Comments and suggestions for Purchasing <span>(optional)</span>
+          <textarea value={satisfactionComments} onChange={(e) => setSatisfactionComments(e.target.value)}
+            placeholder="How can the Purchasing Office improve its service?" /></label></div>
+      </section>}
+      <section className="public-comments"><label>Additional comments <span>(optional)</span><textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Please add any comments about the delivery, quality, or supplier service."/></label><div className="public-submit-row"><div><span>Current average</span><strong>{overall ? overall.toFixed(1) : "—"} / 5</strong></div><button className="btn primary" disabled={submitting} onClick={() => void submit()}>{submitting ? "Submitting…" : "Submit Evaluation"}</button></div>{submitError && <div className="public-eval-error">{submitError}</div>}</section></>}
     <footer className="public-eval-footer">This evaluation link is unique to the intended evaluator. One completed submission is allowed for this transaction.</footer>
   </div></div>;
 }
