@@ -24,6 +24,54 @@ var ISO_HEADERS = [
   'Last Synced At'
 ];
 
+/**
+ * Public reachability check. Never reveals Drive IDs or secret properties.
+ */
+function doGet(e) {
+  return jsonResponse_({ ok: true, status: 'ready', service: 'supplier-evaluation-iso' });
+}
+
+/**
+ * Run manually in the Apps Script editor before using the production web app.
+ * This performs checks only. It never sends an email or modifies any sheet.
+ */
+function testIntegrationSetup() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('EMAIL_WEBHOOK_SECRET');
+  var sheetId = props.getProperty('SUPPLIER_SHEET_ID');
+  if (!secret || secret.length < 24) throw new Error('Configure EMAIL_WEBHOOK_SECRET (24+ characters).');
+  if (!sheetId) throw new Error('Configure SUPPLIER_SHEET_ID.');
+  var sheet = SpreadsheetApp.openById(sheetId);
+  assertPrivateWorkbook_(sheetId);
+  var folderId = props.getProperty('PO_DRIVE_FOLDER_ID');
+  if (folderId) {
+    var folder = DriveApp.getFolderById(folderId);
+    // Read-only access check. Upload permissions must also be granted.
+    folder.getName();
+  }
+  var result = {
+    ok: true,
+    status: 'ready',
+    spreadsheetAccess: 'verified',
+    spreadsheetSharing: 'restricted',
+    driveFolderAccess: folderId ? 'verified-read' : 'not-yet-configured'
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
+ * Supplier evaluation responses include named staff and their ratings.
+ * Never write them to a spreadsheet that has anyone-with-link access.
+ * Do not change sharing settings automatically: school staff must approve.
+ */
+function assertPrivateWorkbook_(sheetId) {
+  var sharing = DriveApp.getFileById(sheetId).getSharingAccess();
+  if (sharing === DriveApp.Access.ANYONE || sharing === DriveApp.Access.ANYONE_WITH_LINK) {
+    throw new Error('Workbook is accessible by anyone with the link. Restrict sharing before syncing confidential evaluations.');
+  }
+}
+
 function doPost(e) {
   try {
     var request = JSON.parse((e && e.postData && e.postData.contents) || '{}');
@@ -71,6 +119,7 @@ function upsertWebEvaluation_(request, props) {
   if (!data.poNumber || !data.submittedAt) throw new Error('Missing required evaluation details.');
   var spreadsheetId = props.getProperty('SUPPLIER_SHEET_ID');
   if (!spreadsheetId) throw new Error('SUPPLIER_SHEET_ID is not configured.');
+  assertPrivateWorkbook_(spreadsheetId);
   var satisfaction = data.customerSatisfaction || {};
   var score = data.scores || {};
   var reasons = data.ratingRemarks || {};
