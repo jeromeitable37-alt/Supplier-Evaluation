@@ -57,12 +57,32 @@ function siscIsoTestSetup() {
   }
   if (!sheetId) throw new Error('Set SUPPLIER_SHEET_ID in Script Properties.');
   SpreadsheetApp.openById(sheetId).getName();
-  siscIsoAssertPrivateWorkbook_(sheetId);
+  var visibility;
+  try {
+    visibility = siscIsoCheckWorkbookVisibility_(sheetId);
+  } catch (error) {
+    var diagnostic = {
+      ok: false,
+      sheetAccess: 'verified',
+      privacyCheck: 'unavailable',
+      syncReady: false,
+      message: String(error && error.message || error)
+    };
+    Logger.log(JSON.stringify(diagnostic));
+    return diagnostic;
+  }
   var folderId = props.getProperty('PO_DRIVE_FOLDER_ID');
   if (folderId) DriveApp.getFolderById(folderId).getName();
+  var ready = !visibility.anyoneCanRead;
   var result = {
-    ok: true, sheet: 'accessible', sharing: 'restricted',
-    poDriveFolder: folderId ? 'read-access-verified' : 'not-configured'
+    ok: ready,
+    sheetAccess: 'verified',
+    privacyCheck: ready ? 'restricted' : 'anyone-with-link',
+    syncReady: ready,
+    poDriveFolder: folderId ? 'read-access-verified' : 'not-configured',
+    message: ready
+      ? 'Sheet access and privacy checks passed.'
+      : 'The Sheet has anyone-with-link access; confidential sync is paused. Existing data was not changed.'
   };
   Logger.log(JSON.stringify(result));
   return result;
@@ -72,11 +92,51 @@ function siscIsoTestSetup() {
  * Do not send evaluator names, emails and scores to a public workbook.
  * A school administrator must change any broad file sharing deliberately.
  */
+/**
+ * Query Google Drive permissions through the documented API instead of
+ * DriveApp.getSharingAccess(), which throws "invalid access settings" in
+ * some school-owned shared files. This checks only; it changes no sharing.
+ * Uses the authorized user's Apps Script OAuth token (never logs it).
+ */
+function siscIsoCheckWorkbookVisibility_(sheetId) {
+  var endpoint = 'https://www.googleapis.com/drive/v3/files/' +
+    encodeURIComponent(sheetId) + '/permissions';
+  var entries = 0;
+  var publicLink = false;
+  var nextToken = '';
+  var pages = 0;
+  do {
+    if (++pages > 20) throw new Error('Workbook permission list was too long to verify.');
+    var query = '?pageSize=100&supportsAllDrives=true&fields=' +
+      encodeURIComponent('nextPageToken,permissions(type,role,allowFileDiscovery)');
+    if (nextToken) query += '&pageToken=' + encodeURIComponent(nextToken);
+    var response = UrlFetchApp.fetch(endpoint + query, {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+    if (response.getResponseCode() !== 200) {
+      throw new Error('Unable to read Drive sharing permissions (HTTP ' +
+        response.getResponseCode() +
+        '). Confirm school account access and Drive API authorization.');
+    }
+    var parsed = JSON.parse(response.getContentText());
+    if (!Array.isArray(parsed.permissions)) {
+      throw new Error('Google Drive did not return a verifiable permission list.');
+    }
+    parsed.permissions.forEach(function (permission) {
+      entries++;
+      if (permission.type === 'anyone') publicLink = true;
+    });
+    nextToken = String(parsed.nextPageToken || '');
+  } while (nextToken);
+  if (entries === 0) throw new Error('No workbook permissions were available to inspect.');
+  return { anyoneCanRead: publicLink };
+}
+
 function siscIsoAssertPrivateWorkbook_(sheetId) {
-  var mode = DriveApp.getFileById(sheetId).getSharingAccess();
-  if (mode === DriveApp.Access.ANYONE ||
-      mode === DriveApp.Access.ANYONE_WITH_LINK) {
-    throw new Error('The official workbook currently allows anyone-with-link access. Restrict sharing before syncing evaluator records.');
+  if (siscIsoCheckWorkbookVisibility_(sheetId).anyoneCanRead) {
+    throw new Error('The official Sheet is accessible by anyone with the link. Confidential evaluation syncing is paused; no records were changed.');
   }
 }
 
