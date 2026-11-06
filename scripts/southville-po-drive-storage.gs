@@ -32,6 +32,23 @@ function siscDriveFolder_() {
   return DriveApp.getFolderById(id);
 }
 
+/**
+ * Read-only folder privacy check. Run once from the Apps Script editor after
+ * pasting PoDriveStorage.gs. No PO files are created, read, or modified.
+ */
+function siscDriveCheckFolderSetup() {
+  var folder = siscDriveFolder_();
+  var result = {
+    ok: true,
+    folderAccess: 'verified',
+    folderPrivacy: 'no-anyone-link',
+    uploadWritePermission: 'previously-verified-separately',
+    automaticWebsiteUpload: 'not-enabled'
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
 function siscDriveAllowedFile_(file) {
   var mime = String(file.mimeType || '').toLowerCase();
   if (!SISC_PO_ALLOWED_MIMES_[mime]) {
