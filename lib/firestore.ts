@@ -693,6 +693,13 @@ export async function createPublicRequisitionerEvaluation(input: {
   scores: Record<string, number>;
   comments: string;
   overall: number;
+  ratingRemarks?: Record<string, string>;
+  customerSatisfaction?: {
+    timeliness: number;
+    accuracy: number;
+    comments: string;
+    evaluatedBy: string;
+  };
 }) {
   const firestore = requireDb();
   const role: EvaluationRole =
@@ -741,6 +748,9 @@ export async function createPublicRequisitionerEvaluation(input: {
     evaluatorEmail: input.link.evaluatorEmail || (role === "purchaser" ? input.link.po.buyerEmail : role === "amd_personnel" ? input.link.amdEmail : input.link.requisitionerEmail) || "",
     submittedAt,
     evaluationLinkId: input.token,
+    scores: input.scores,
+    ratingRemarks: input.ratingRemarks || {},
+    customerSatisfaction: role === "requisitioner" ? (input.customerSatisfaction || null) : null,
   };
   const calculateLeadTimeDays = (orderDate?: string, actualDeliveryDate?: string) => {
     if (!orderDate || !actualDeliveryDate) return null;
