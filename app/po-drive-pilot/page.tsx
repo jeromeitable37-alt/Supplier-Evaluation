@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { auth, signInWithEmail } from "../../lib/firebase";
+import { auth, signInWithEmail, signInWithGoogle } from "../../lib/firebase";
 
 type Uploaded = { fileId: string; name: string; mimeType: string; size: number };
 const MAX_SIZE = 8 * 1024 * 1024;
@@ -15,6 +15,7 @@ export default function PoDrivePilot() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [signingGoogleIn, setSigningGoogleIn] = useState(false);
   const [driveReady, setDriveReady] = useState(false);
   const [driveEnabled, setDriveEnabled] = useState(false);
   const [poNumber, setPoNumber] = useState("");
@@ -88,6 +89,35 @@ export default function PoDrivePilot() {
         : "Could not sign in. Check your account.");
     } finally {
       setSigningIn(false);
+    }
+  }
+
+  async function googleSignIn() {
+    if (!auth) {
+      setAuthIssue("Firebase is not configured for this Preview site.");
+      return;
+    }
+    setSigningGoogleIn(true);
+    setAuthIssue("");
+    try {
+      // Match the login provider already offered on the real website.
+      await signInWithGoogle();
+      setPassword("");
+    } catch (failure: any) {
+      const code = String(failure?.code || "");
+      if (code === "auth/unauthorized-domain") {
+        setAuthIssue("Google sign-in is not authorized for this Preview URL. The Firebase project owner must add this exact Vercel hostname to Authentication > Settings > Authorized domains.");
+      } else if (code === "auth/popup-blocked") {
+        setAuthIssue("Your browser blocked the Google pop-up. Allow pop-ups for this Preview website, then try again.");
+      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        setAuthIssue("Google sign-in was cancelled. Select Continue with Google to try again.");
+      } else {
+        setAuthIssue(failure instanceof Error
+          ? failure.message.replace(/^Firebase: /, "")
+          : "Could not sign in with Google. Try again using your existing account.");
+      }
+    } finally {
+      setSigningGoogleIn(false);
     }
   }
 
@@ -201,7 +231,16 @@ export default function PoDrivePilot() {
             style={{ border: "1px solid #ddd6fe", borderRadius: 12, padding: 16, marginTop: 14, background: "#faf5ff" }}>
             <strong>Existing Purchasing admin sign-in</strong>
             <p style={{ fontSize: 13, color: "#475569" }}>
-              Use your existing Supplier Evaluation account. Preview and Production have separate browser sessions; this does not create a new account.
+              Use the same Google account you already use for Supplier Evaluation.
+              Preview and Production have separate browser sessions; this does not create a new account.
+            </p>
+            <button type="button" onClick={() => void googleSignIn()} disabled={signingGoogleIn || signingIn}
+              style={{ ...buttonStyle, display: "block", width: "100%", background: "#ffffff",
+                color: "#312e81", border: "1px solid #c4b5fd", marginTop: 14 }}>
+              {signingGoogleIn ? "Opening Google sign-in…" : "Continue with Google"}
+            </button>
+            <p style={{ margin: "16px 0 8px", fontSize: 12, color: "#64748b", textAlign: "center" }}>
+              Or use email and password only if your existing account supports it
             </p>
             <label style={{ display: "block", marginTop: 10 }}>Email
               <input style={inputStyle} type="email" value={email} onChange={e => setEmail(e.target.value)}
