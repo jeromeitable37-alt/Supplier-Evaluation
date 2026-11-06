@@ -5,6 +5,18 @@ export const runtime = "nodejs";
 const MAX_PO_SIZE = 8 * 1024 * 1024;
 const SUPPORTED = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
+/**
+ * Public, read-only feature-status endpoint.
+ * Returns ONLY the safety switch; no secrets, credentials, staff identities,
+ * folder IDs or configuration values are ever exposed.
+ */
+export async function GET() {
+  return NextResponse.json({
+    ok: true,
+    uploadEnabled: process.env.PO_DRIVE_UPLOAD_ENABLED === "true",
+  }, { headers: { "Cache-Control": "no-store" } });
+}
+
 /** Pilot: authorized admin uploads one official PO page/file at a time. */
 export async function POST(request: Request) {
   try {
