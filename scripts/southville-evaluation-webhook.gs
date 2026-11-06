@@ -39,6 +39,12 @@ function doPost(e) {
     if (action === 'sync_evaluation') {
       return siscWebhookJson_(siscIsoSyncEvaluation_(request));
     }
+    if (action === 'upload_po') {
+      return siscWebhookJson_(siscDriveUploadPo_(request));
+    }
+    if (action === 'get_po_file') {
+      return siscWebhookJson_(siscDriveGetPoFile_(request));
+    }
     if (action === 'send_email') {
       return siscWebhookJson_(siscWebhookSendEmail_(request, props));
     }
