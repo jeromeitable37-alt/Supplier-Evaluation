@@ -1,25 +1,18 @@
 /**
- * SupplierEvaluationISO.gs — ADD-ON for an EXISTING Google Sheet Apps Script project.
- * DO NOT replace existing scripts, mail sender, scheduled jobs or doPost(e).
+ * SupplierEvaluationISO.gs — Add-on for the existing school Apps Script.
  *
- * The existing doPost(e) must have a small action branch:
- *  if (request.action === 'sync_evaluation') {
- *    try {
- *      return ContentService
- *        .createTextOutput(JSON.stringify(siscIsoSyncEvaluation_(request)))
- *        .setMimeType(ContentService.MimeType.JSON);
- *    } catch (err) {
- *      return ContentService
- *        .createTextOutput(JSON.stringify({ok:false,message:String(err && err.message || err)}))
- *        .setMimeType(ContentService.MimeType.JSON);
- *    }
- *  }
- * Place this immediately AFTER parsing the POST JSON into "request" and BEFORE
- * existing email-specific checks. The existing email path stays unchanged.
+ * Keep Code.gs exactly as it is. This file contains ONLY ISO evaluation sync
+ * helpers. It intentionally DOES NOT declare doPost(e) or doGet(e).
  *
- * Required Script Property: SUPPLIER_SHEET_ID = official workbook ID.
- * Reuses the existing PMS_WEBHOOK_SECRET or EMAIL_WEBHOOK_SECRET property.
- * No other globals, doGet(e), doPost(e) or triggers are declared here.
+ * Because Code.gs has no doPost and ven.gs is currently empty, paste the
+ * companion scripts/southville-evaluation-webhook.gs into ven.gs.
+ * That companion file handles incoming email and sync requests.
+ *
+ * Script properties are private. Never paste a secret in the source code.
+ * Required: SUPPLIER_SHEET_ID and PMS_WEBHOOK_SECRET (or EMAIL_WEBHOOK_SECRET).
+ *
+ * The destination Sheet is presently anyone-with-link-viewable; sync is
+ * blocked until the workbook owner approves a protected access migration.
  */
 
 var SISC_ISO_TAB_NAME_ = 'WEB_EVALUATIONS';
