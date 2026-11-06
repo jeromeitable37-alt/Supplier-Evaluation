@@ -1,19 +1,29 @@
 /**
- * SOUTHVILLE PURCHASING - evaluation integration, deployed by the authorized
- * school Google Workspace account that owns the official spreadsheet.
+ * SupplierEvaluationISO.gs — ADD-ON for an EXISTING Google Sheet Apps Script project.
+ * DO NOT replace existing scripts, mail sender, scheduled jobs or doPost(e).
  *
- * Deploy as Web App -> Execute as Me. Configure Script Properties:
- *   EMAIL_WEBHOOK_SECRET = random long value (match Vercel secret)
- *   SUPPLIER_SHEET_ID = spreadsheet ID, owned by this account
+ * The existing doPost(e) must have a small action branch:
+ *  if (request.action === 'sync_evaluation') {
+ *    try {
+ *      return ContentService
+ *        .createTextOutput(JSON.stringify(siscIsoSyncEvaluation_(request)))
+ *        .setMimeType(ContentService.MimeType.JSON);
+ *    } catch (err) {
+ *      return ContentService
+ *        .createTextOutput(JSON.stringify({ok:false,message:String(err && err.message || err)}))
+ *        .setMimeType(ContentService.MimeType.JSON);
+ *    }
+ *  }
+ * Place this immediately AFTER parsing the POST JSON into "request" and BEFORE
+ * existing email-specific checks. The existing email path stays unchanged.
  *
- * Requests without "action" retain backwards compatibility with the existing
- * send-evaluation and reminder routes.
- *
- * This deliberately writes to WEB_EVALUATIONS rather than changing historical
- * DATABASE formulas or legacy reports.
+ * Required Script Property: SUPPLIER_SHEET_ID = official workbook ID.
+ * Reuses the existing PMS_WEBHOOK_SECRET or EMAIL_WEBHOOK_SECRET property.
+ * No other globals, doGet(e), doPost(e) or triggers are declared here.
  */
-var ISO_TAB = 'WEB_EVALUATIONS';
-var ISO_HEADERS = [
+
+var SISC_ISO_TAB_NAME_ = 'WEB_EVALUATIONS';
+var SISC_ISO_HEADERS_ = [
   'Evaluation ID', 'Submitted At', 'PO Number', 'PRF No', 'Supplier',
   'Supplier Address', 'Items Delivered', 'Evaluator Role', 'Evaluator Name',
   'Evaluator Email', 'Accurate Delivery / Quality', 'Competitive Price',
@@ -25,90 +35,71 @@ var ISO_HEADERS = [
 ];
 
 /**
- * Public reachability check. Never reveals Drive IDs or secret properties.
+ * Called only by your EXISTING doPost(e) dispatcher.
+ * Double-checks the shared secret even if that dispatcher already authenticates.
  */
-function doGet(e) {
-  return jsonResponse_({ ok: true, status: 'ready', service: 'supplier-evaluation-iso' });
+function siscIsoSyncEvaluation_(request) {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('PMS_WEBHOOK_SECRET') ||
+    props.getProperty('EMAIL_WEBHOOK_SECRET');
+  if (!secret || secret.length < 24 || !request || request.secret !== secret) {
+    throw new Error('Unauthorized or unconfigured ISO sync request.');
+  }
+  var result = siscIsoUpsertWebEvaluation_(request, props);
+  result.ok = true;
+  return result;
 }
 
 /**
- * Run manually in the Apps Script editor before using the production web app.
- * This performs checks only. It never sends an email or modifies any sheet.
+ * Read-only permissions check: run directly in editor while signed in with the
+ * school account. No mail is sent, no data is created, no old sheet is modified.
  */
-function testIntegrationSetup() {
+function siscIsoTestSetup() {
   var props = PropertiesService.getScriptProperties();
-  var secret = props.getProperty('EMAIL_WEBHOOK_SECRET');
+  var secret = props.getProperty('PMS_WEBHOOK_SECRET') ||
+    props.getProperty('EMAIL_WEBHOOK_SECRET');
   var sheetId = props.getProperty('SUPPLIER_SHEET_ID');
-  if (!secret || secret.length < 24) throw new Error('Configure EMAIL_WEBHOOK_SECRET (24+ characters).');
-  if (!sheetId) throw new Error('Configure SUPPLIER_SHEET_ID.');
-  var sheet = SpreadsheetApp.openById(sheetId);
-  assertPrivateWorkbook_(sheetId);
-  var folderId = props.getProperty('PO_DRIVE_FOLDER_ID');
-  if (folderId) {
-    var folder = DriveApp.getFolderById(folderId);
-    // Read-only access check. Upload permissions must also be granted.
-    folder.getName();
+  if (!secret || secret.length < 24) {
+    throw new Error('Configure existing PMS_WEBHOOK_SECRET or EMAIL_WEBHOOK_SECRET (24+ characters).');
   }
+  if (!sheetId) throw new Error('Set SUPPLIER_SHEET_ID in Script Properties.');
+  SpreadsheetApp.openById(sheetId).getName();
+  siscIsoAssertPrivateWorkbook_(sheetId);
+  var folderId = props.getProperty('PO_DRIVE_FOLDER_ID');
+  if (folderId) DriveApp.getFolderById(folderId).getName();
   var result = {
-    ok: true,
-    status: 'ready',
-    spreadsheetAccess: 'verified',
-    spreadsheetSharing: 'restricted',
-    driveFolderAccess: folderId ? 'verified-read' : 'not-yet-configured'
+    ok: true, sheet: 'accessible', sharing: 'restricted',
+    poDriveFolder: folderId ? 'read-access-verified' : 'not-configured'
   };
   Logger.log(JSON.stringify(result));
   return result;
 }
 
 /**
- * Supplier evaluation responses include named staff and their ratings.
- * Never write them to a spreadsheet that has anyone-with-link access.
- * Do not change sharing settings automatically: school staff must approve.
+ * Do not send evaluator names, emails and scores to a public workbook.
+ * A school administrator must change any broad file sharing deliberately.
  */
-function assertPrivateWorkbook_(sheetId) {
-  var sharing = DriveApp.getFileById(sheetId).getSharingAccess();
-  if (sharing === DriveApp.Access.ANYONE || sharing === DriveApp.Access.ANYONE_WITH_LINK) {
-    throw new Error('Workbook is accessible by anyone with the link. Restrict sharing before syncing confidential evaluations.');
+function siscIsoAssertPrivateWorkbook_(sheetId) {
+  var mode = DriveApp.getFileById(sheetId).getSharingAccess();
+  if (mode === DriveApp.Access.ANYONE ||
+      mode === DriveApp.Access.ANYONE_WITH_LINK) {
+    throw new Error('The official workbook currently allows anyone-with-link access. Restrict sharing before syncing evaluator records.');
   }
 }
 
-function doPost(e) {
-  try {
-    var request = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    var props = PropertiesService.getScriptProperties();
-    var secret = props.getProperty('EMAIL_WEBHOOK_SECRET');
-    if (!secret || secret.length < 24 || request.secret !== secret) {
-      throw new Error('Unauthorized or unconfigured integration request.');
-    }
-    var action = String(request.action || 'send_email');
-    var result;
-    if (action === 'send_email') result = sendEvaluationEmail_(request);
-    else if (action === 'sync_evaluation') result = upsertWebEvaluation_(request, props);
-    else throw new Error('Unsupported action.');
-    return jsonResponse_(Object.assign({ ok: true }, result));
-  } catch (error) {
-    return jsonResponse_({ ok: false, message: String(error && error.message || error) });
-  }
-}
-
-function jsonResponse_(data) {
-  return ContentService.createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function safeSheetText_(value, maxLength) {
+function siscIsoSafeSheetText_(value, maxLength) {
   var text = String(value == null ? '' : value).trim().slice(0, maxLength || 1000);
   // Prevent formulas supplied in submitted text from being evaluated as formulas.
   return /^[=+\-@]/.test(text) ? "'" + text : text;
 }
 
-function safeScore_(value) {
+function siscIsoSafeScore_(value) {
   if (value === '' || value == null) return '';
   var n = Number(value);
   return Number.isInteger(n) && n >= 1 && n <= 5 ? n : '';
 }
 
-function upsertWebEvaluation_(request, props) {
+function siscIsoUpsertWebEvaluation_(request, props) {
   var data = request.evaluation || {};
   var id = String(data.id || '').trim();
   var role = String(data.evaluatorRole || '').trim();
@@ -119,27 +110,27 @@ function upsertWebEvaluation_(request, props) {
   if (!data.poNumber || !data.submittedAt) throw new Error('Missing required evaluation details.');
   var spreadsheetId = props.getProperty('SUPPLIER_SHEET_ID');
   if (!spreadsheetId) throw new Error('SUPPLIER_SHEET_ID is not configured.');
-  assertPrivateWorkbook_(spreadsheetId);
+  siscIsoAssertPrivateWorkbook_(spreadsheetId);
   var satisfaction = data.customerSatisfaction || {};
   var score = data.scores || {};
   var reasons = data.ratingRemarks || {};
   var avg = Number(data.finalRating);
   var row = [
-    safeSheetText_(id, 100), safeSheetText_(data.submittedAt, 40),
-    safeSheetText_(data.poNumber, 100), safeSheetText_(data.prfNo, 100),
-    safeSheetText_(data.supplier, 300), safeSheetText_(data.address, 400),
-    safeSheetText_(data.itemsDelivered, 3000), role,
-    safeSheetText_(data.evaluatorName, 200), safeSheetText_(data.evaluatorEmail, 250),
-    safeScore_(score.accurate_delivery), safeScore_(score.competitive_price),
-    safeScore_(score.timeliness), safeScore_(score.after_sales),
-    role === 'purchaser' ? safeScore_(score.compliance) : 'N/A',
+    siscIsoSafeSheetText_(id, 100), siscIsoSafeSheetText_(data.submittedAt, 40),
+    siscIsoSafeSheetText_(data.poNumber, 100), siscIsoSafeSheetText_(data.prfNo, 100),
+    siscIsoSafeSheetText_(data.supplier, 300), siscIsoSafeSheetText_(data.address, 400),
+    siscIsoSafeSheetText_(data.itemsDelivered, 3000), role,
+    siscIsoSafeSheetText_(data.evaluatorName, 200), siscIsoSafeSheetText_(data.evaluatorEmail, 250),
+    siscIsoSafeScore_(score.accurate_delivery), siscIsoSafeScore_(score.competitive_price),
+    siscIsoSafeScore_(score.timeliness), siscIsoSafeScore_(score.after_sales),
+    role === 'purchaser' ? siscIsoSafeScore_(score.compliance) : 'N/A',
     Number.isFinite(avg) && avg >= 1 && avg <= 5 ? avg : '',
-    safeSheetText_(data.remarks, 3000),
-    safeSheetText_(JSON.stringify(reasons), 3000),
-    role === 'requisitioner' ? safeScore_(satisfaction.timeliness) : '',
-    role === 'requisitioner' ? safeScore_(satisfaction.accuracy) : '',
-    role === 'requisitioner' ? safeSheetText_(satisfaction.comments, 3000) : '',
-    role === 'requisitioner' ? safeSheetText_(satisfaction.evaluatedBy, 200) : '',
+    siscIsoSafeSheetText_(data.remarks, 3000),
+    siscIsoSafeSheetText_(JSON.stringify(reasons), 3000),
+    role === 'requisitioner' ? siscIsoSafeScore_(satisfaction.timeliness) : '',
+    role === 'requisitioner' ? siscIsoSafeScore_(satisfaction.accuracy) : '',
+    role === 'requisitioner' ? siscIsoSafeSheetText_(satisfaction.comments, 3000) : '',
+    role === 'requisitioner' ? siscIsoSafeSheetText_(satisfaction.evaluatedBy, 200) : '',
     new Date().toISOString()
   ];
 
@@ -147,12 +138,12 @@ function upsertWebEvaluation_(request, props) {
   lock.waitLock(20000);
   try {
     var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
-    var sheet = spreadsheet.getSheetByName(ISO_TAB);
+    var sheet = spreadsheet.getSheetByName(SISC_ISO_TAB_NAME_);
     if (!sheet) {
-      sheet = spreadsheet.insertSheet(ISO_TAB);
-      sheet.getRange(1, 1, 1, ISO_HEADERS.length).setValues([ISO_HEADERS]);
+      sheet = spreadsheet.insertSheet(SISC_ISO_TAB_NAME_);
+      sheet.getRange(1, 1, 1, SISC_ISO_HEADERS_.length).setValues([SISC_ISO_HEADERS_]);
       sheet.setFrozenRows(1);
-      sheet.getRange(1, 1, 1, ISO_HEADERS.length).setBackground('#40266d').setFontColor('#ffffff').setFontWeight('bold');
+      sheet.getRange(1, 1, 1, SISC_ISO_HEADERS_.length).setBackground('#40266d').setFontColor('#ffffff').setFontWeight('bold');
     }
     var last = sheet.getLastRow();
     var existingRow = 0;
@@ -163,46 +154,9 @@ function upsertWebEvaluation_(request, props) {
     if (existingRow) sheet.getRange(existingRow, 1, 1, row.length).setValues([row]);
     else sheet.appendRow(row);
     SpreadsheetApp.flush();
-    return { message: 'Evaluation synced to official sheet.', evaluationId: id, row: existingRow || sheet.getLastRow(), sheet: ISO_TAB };
+    return { message: 'Evaluation synced to official sheet.', evaluationId: id, row: existingRow || sheet.getLastRow(), sheet: SISC_ISO_TAB_NAME_ };
   } finally {
     lock.releaseLock();
   }
 }
 
-function sendEvaluationEmail_(request) {
-  var to = String(request.to || '').trim();
-  var subject = String(request.subject || '').trim();
-  var body = String(request.textBody || '').trim();
-  var html = String(request.htmlBody || '');
-  if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(to)) throw new Error('Invalid recipient email.');
-  if (!body || !subject || subject.length > 250) throw new Error('Email subject and body are required.');
-  var items = Array.isArray(request.attachments) ? request.attachments : [];
-  if (items.length < 1 || items.length > 10) throw new Error('1 to 10 official PO attachments are required.');
-  var total = 0;
-  var attachments = items.map(function (item, index) {
-    var blob;
-    var driveId = String(item.fileId || '');
-    var url = String(item.url || '');
-    if (driveId) {
-      if (!/^[A-Za-z0-9_-]{15,150}$/.test(driveId)) throw new Error('Invalid Drive file ID.');
-      blob = DriveApp.getFileById(driveId).getBlob();
-    } else {
-      // Only permit legacy Cloudinary downloads; do not fetch arbitrary URLs.
-      if (!/^https:\/\/res\.cloudinary\.com\//i.test(url)) {
-        throw new Error('Attachment must reference an authorized Drive file or legacy Cloudinary URL.');
-      }
-      var res = UrlFetchApp.fetch(url, { followRedirects: true, muteHttpExceptions: true });
-      if (res.getResponseCode() !== 200) throw new Error('PO attachment could not be downloaded.');
-      blob = res.getBlob();
-    }
-    total += blob.getBytes().length;
-    if (total > 20 * 1024 * 1024) throw new Error('Email attachments exceed 20 MB.');
-    var name = String(item.name || ('PO-' + (index + 1) + '.pdf')).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160);
-    return blob.setName(name);
-  });
-  MailApp.sendEmail({
-    to: to, subject: subject, body: body, htmlBody: html,
-    name: 'Southville Supplier Evaluation', attachments: attachments
-  });
-  return { message: 'Email accepted by the school Google account.', recipient: to, attachmentCount: attachments.length };
-}
