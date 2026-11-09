@@ -5,6 +5,7 @@ import { ArrowLeft, CheckCircle2, Database, LockKeyhole, RefreshCw, ShieldCheck,
 import { firebaseConfigured, signInWithGoogle, subscribeAuth } from "../../lib/firebase";
 import type { User } from "firebase/auth";
 import NeonEvaluationExplorer from "../../components/NeonEvaluationExplorer";
+import NeonPurchasingPreview from "../../components/NeonPurchasingPreview";
 
 type PilotData = {
   ok: true;
@@ -194,6 +195,7 @@ export default function NeonPilotPage() {
               </div>
             </section>
             {auditOk && user && <NeonEvaluationExplorer user={user} />}
+            {auditOk && user && <NeonPurchasingPreview user={user} />}
           </>
         )}
         <div style={{ display: "flex", gap: 10, color: "#b8d4d0", alignItems: "center", lineHeight: 1.55, fontSize: 13 }}>
