@@ -627,6 +627,11 @@ export default function Home() {
         </header>
 
         <div className="page-content">
+          {neonEnabled() && (
+            <div role="status" style={{ marginBottom: 16, padding: "13px 16px", borderRadius: 11, background: "#fff5da", border: "1px solid #dcb35e", color: "#624714", fontSize: 13, lineHeight: 1.5 }}>
+              <strong>NEON MIGRATION PREVIEW — Test environment.</strong> Records here are stored in the isolated PostgreSQL preview, not the live Firestore database. Real school email and Google Sheet delivery are disabled until approved testing.
+            </div>
+          )}
           {dbError && <div className="panel warning-panel firebase-warning"><AlertCircle size={18}/><div><b>{neonEnabled() ? "Neon preview connection needs attention" : "Firebase connection needs setup"}</b><p>{dbError}</p><small>{neonEnabled() ? "Verify your approved account and Neon Preview connection." : "See the Firebase setup steps in the README included with this project."}</small></div></div>}
           {page === "dashboard" && <AdvancedDashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={openNewEvaluation} onView={(r) => setViewing(r)} onViewAll={() => navigate("reports")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
           {page === "evaluations" && <Evaluations records={filtered} query={query} setQuery={setQuery} filterRecommendation={filterRecommendation} setFilterRecommendation={setFilterRecommendation} filterSupplier={filterSupplier} setFilterSupplier={setFilterSupplier} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} suppliers={suppliers} onEdit={setEditing} onView={setViewing} onDelete={removeEvaluation} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
