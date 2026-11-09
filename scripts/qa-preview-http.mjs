@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * Non-destructive HTTP smoke test. No login, test user, database password,
- * write permissions, email or Google Sheet side effects are needed.
+ * Read-only security QA against the pinned Vercel Preview hostname.
  *
- * Run: node scripts/qa-preview-http.mjs
+ * Normal mode: detects Vercel SSO and explicitly reports BLOCKED instead of
+ * falsely counting app API failures.
+ * Authenticated mode: node scripts/qa-preview-http.mjs --vercel-cli
+ * uses the operator's Vercel CLI login to reach protected Preview; it DOES NOT
+ * use a bypass token or modify deployment protection. Firebase ID tokens are
+ * intentionally omitted to test anonymous application authorization.
  *
- * Public Vercel Preview ONLY. Refuses to run against Production or arbitrary
- * hosts. This tests access denial and fail-closed external service flags,
- * NOT full authenticated CRUD acceptance.
+ * No school records, emails, or Google Sheets are modified.
  */
+import { spawnSync } from "node:child_process";
+
 const HOST="supplier-evaluation-git-upgrad-3d7613-jeromes-projects-ce3c618b.vercel.app";
 const ROOT="https://"+HOST;
 const checks=[
@@ -26,30 +30,93 @@ const checks=[
   {name:"Preview official Google Sheet writes disabled",method:"POST",path:"/api/sync-evaluation",expected:503,body:{}},
   {name:"Preview reminder delivery disabled",method:"GET",path:"/api/cron/evaluation-reminders",expected:503},
 ];
-const args=process.argv.slice(2);
-if(args.length)throw new Error("This QA script only permits its pinned Preview hostname (no command-line URL).");
 
-let passed=0,failed=0;
-for(const check of checks){
-  try{
-    const response=await fetch(ROOT+check.path,{
-      method:check.method,
-      headers:{...(check.body?{"Content-Type":"application/json"}:{})},
-      body:check.body?JSON.stringify(check.body):undefined,
-      cache:"no-store",
-      signal:AbortSignal.timeout(15000),
-      redirect:"manual",
-    });
-    const success=response.status===check.expected;
-    console.log((success?"PASS":"FAIL")+" | "+check.name+
-      " | HTTP "+response.status+" (expected "+check.expected+")");
-    if(success)passed++;else failed++;
-  }catch(error){
-    console.log("FAIL | "+check.name+" | Request unavailable: "+
-      (error instanceof Error?error.name:"unknown"));
-    failed++;
-  }
+const args=process.argv.slice(2);
+if(args.some(x=>x!=="--vercel-cli")||new Set(args).size!==args.length){
+  throw new Error("Only --vercel-cli is supported. The Preview target is fixed.");
 }
-console.log("Preview HTTP QA summary:",passed,"PASS;",failed,"FAIL; total:",checks.length);
-console.log("This test performed no authorized record changes, emails, or Sheet writes.");
-if(failed)process.exitCode=1;
+const authenticated=args.includes("--vercel-cli");
+const guardedLogin=()=>{
+  console.log("BLOCKED BY VERCEL SSO | These are protection redirects, not Supplier Evaluation API failures.");
+  console.log("Vercel Preview SSO must remain enabled. To authenticate the CLI:");
+  console.log("  npm install -g vercel");
+  console.log("  vercel login");
+  console.log("  vercel whoami");
+  console.log("Then run: node scripts/qa-preview-http.mjs --vercel-cli");
+  process.exitCode=3;
+};
+
+async function rawRequest(check){
+  const response=await fetch(ROOT+check.path,{
+    method:check.method,
+    headers:{...(check.body?{"Content-Type":"application/json"}:{})},
+    body:check.body?JSON.stringify(check.body):undefined,
+    cache:"no-store",
+    signal:AbortSignal.timeout(15000),
+    redirect:"manual",
+  });
+  return {status:response.status,location:response.headers.get("location")};
+}
+
+function vercelCliRequest(check) {
+  const argv=[
+    "curl",ROOT+check.path,"-sS","-o","/dev/null","-w","%{http_code}",
+    "-X",check.method,
+  ];
+  if(check.body){
+    argv.push("-H","Content-Type: application/json","-d",JSON.stringify(check.body));
+  }
+  const run=spawnSync("vercel",argv,{
+    encoding:"utf8",timeout:25000,maxBuffer:1024*512,windowsHide:true,
+    env:process.env,
+  });
+  if(run.error) {
+    if(run.error.code==="ENOENT")throw new Error("Vercel CLI is not installed. Run npm install -g vercel.");
+    throw new Error("Vercel CLI request unavailable: "+run.error.message);
+  }
+  if(run.status!==0) {
+    // Do not echo response bodies, account details or tokens.
+    throw new Error("Vercel CLI authentication or request failed. Check vercel whoami, then retry.");
+  }
+  const statusText=String(run.stdout||"").trim().match(/\b[1-5][0-9]{2}\s*$/)?.[0]?.trim();
+  const status=Number(statusText);
+  if(!Number.isInteger(status)||status<100||status>599){
+    throw new Error("Vercel CLI did not return a valid HTTP status.");
+  }
+  return {status,location:null};
+}
+
+async function main(){
+  if(!authenticated){
+    let probe;
+    try{probe=await rawRequest(checks[0]);}
+    catch(error){
+      console.error("Unable to reach Preview:",error instanceof Error?error.name:"unknown");
+      process.exitCode=1;return;
+    }
+    // Vercel Project Settings confirmed SSO on Preview URLs. Any redirect
+    // at the homepage in this fixed target is a blocked HTTP smoke test;
+    // do NOT follow the redirect and count application-level assertions.
+    if(probe.status===301||probe.status===302||probe.status===303||probe.status===307||probe.status===308){
+      guardedLogin();return;
+    }
+  }
+  let passed=0,failed=0;
+  for(const check of checks){
+    try{
+      const result=authenticated?vercelCliRequest(check):await rawRequest(check);
+      const success=result.status===check.expected;
+      console.log((success?"PASS":"FAIL")+" | "+check.name+
+        " | HTTP "+result.status+" (expected "+check.expected+")");
+      if(success)passed++;else failed++;
+    }catch(error){
+      console.log("FAIL | "+check.name+" | "+
+        (error instanceof Error?error.message:"Request failed"));
+      failed++;
+    }
+  }
+  console.log("Preview HTTP QA summary:",passed,"PASS;",failed,"FAIL; total:",checks.length);
+  console.log("No authorized record changes, school email deliveries, or Sheet writes were attempted.");
+  if(failed)process.exitCode=1;
+}
+await main();
