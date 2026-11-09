@@ -171,6 +171,9 @@ export async function POST(request: Request) {
       await upsertEvaluation(db,item);
     } else if (action === "saveMany") {
       requirePermission(session,"import_excel");
+      if (process.env.NEON_PREVIEW_BULK_IMPORT_ENABLED !== "true") {
+        throw new AppAccessError("Bulk import is disabled in Neon Preview to protect migrated school records.",403);
+      }
       const records = body.items;
       if (!Array.isArray(records) || records.length > 400) throw new AppAccessError("Maximum 400 records per batch.",400);
       await transaction(db,async (client)=>{
@@ -178,6 +181,7 @@ export async function POST(request: Request) {
       });
     } else if (action === "deleteEvaluation" || action === "clearEvaluations") {
       requirePermission(session,"delete_evaluations");
+      if(action==="clearEvaluations") throw new AppAccessError("Clear-all is disabled in Neon Preview to protect the 1,430-record migration snapshot.",403);
       const ids = action === "deleteEvaluation" ? [body.id] : body.ids;
       if (!Array.isArray(ids)||ids.length > 4000) throw new AppAccessError("Invalid deletion selection.",400);
       const normalized=ids.map(requireId);
@@ -228,7 +232,9 @@ export async function POST(request: Request) {
       const permissions = Array.isArray(patch.permissions) ?
          patch.permissions.filter((p):p is string=>typeof p==="string"&&PERMISSIONS.has(p)) :
          (Array.isArray(old.permissions)?old.permissions:[]);
-      const updated={...old,role,permissions,active:patch.active!==false,
+      // Preserve the prior approval state unless an administrator explicitly changes it.
+      const nextActive=typeof patch.active==="boolean" ? patch.active : old.active===true;
+      const updated={...old,role,permissions,active:nextActive,
         updatedAt:new Date().toISOString()};
       await db.query(
         "UPDATE se_users SET role=$2,permissions=$3::jsonb,active=$4,payload=$5::jsonb,imported_at=now() WHERE uid=$1",
