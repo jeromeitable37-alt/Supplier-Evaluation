@@ -177,6 +177,7 @@ async function walk(collectionRef) {
     if (last) q = q.startAfter(last);
     const page = await q.get();
     if (page.empty) return;
+    if (!apply) console.log("Scanned page:", page.docs.length, "docs from collection type", collectionRef.id, "- inspecting nested collections…");
 
     if (apply) {
       await sqlClient.query("BEGIN");
@@ -192,6 +193,7 @@ async function walk(collectionRef) {
       const path = countPath(doc);
       counts[path] = (counts[path] || 0) + 1;
       total++;
+      if (total % 25 === 0) console.log("Progress:", total, "Firestore documents checked (including nested collections).");
       const nested = await doc.ref.listCollections();
       for (const sub of nested) await walk(sub);
     }
@@ -273,8 +275,14 @@ async function main() {
     console.log("Created private migration run:", runId);
   }
   try {
+    console.log("Connecting to Firestore project:", firebaseProject, "(read-only source access).");
     const roots = await db.listCollections();
-    for (const col of roots) await walk(col);
+    console.log("Root collections found:", roots.map(c => c.id).sort().join(", ") || "(none)");
+    for (const col of roots) {
+      console.log("Starting collection:", col.id);
+      await walk(col);
+      console.log("Finished collection:", col.id, "| total documents checked:", total);
+    }
     if (apply) await verifyRun();
     console.log(apply ? "Migration snapshot completed." : "Read-only source scan completed.");
     console.log("Total Firestore docs:", total);
