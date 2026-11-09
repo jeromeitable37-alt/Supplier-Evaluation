@@ -113,6 +113,26 @@ No data is written through this pilot. Production stays on Firestore until all
 CRUD workflows and public evaluation links have secured PostgreSQL replacements,
 the latest source delta has been reconciled, and the school owner approves cutover.
 
+## Preview SQL evaluations explorer (November 9, 2026)
+
+After the read-only audit screen was validated through Firebase Google login,
+we added an admin-only SQL record explorer **inside** `/neon-pilot`:
+
+- `/api/neon-evaluations`: paginated server-side SQL summaries (25 per page),
+  literal substring search by supplier, PO number, PRF number, or record ID.
+- `components/NeonEvaluationExplorer.tsx`: searchable, paginated view of
+  imported evaluations, with supplier, PO/PRF number, date, final rating,
+  and recommendation. No write actions.
+- Shared auth module `lib/server/neonPreviewAccess.ts`: Firebase token
+  verification against the original project, active administrator lookup in
+  Neon, and fail-closed database hostname pinning to `migration-preview`.
+- `/api/neon-pilot` reuses the same access check. No secret is sent to
+  the browser. Queries are parameterized, capped, and cache-disabled.
+
+Vercel Preview build for commit `c1066b7` succeeded. This is an initial
+**read-only data view** from PostgreSQL, not a complete production CRUD
+migration. Live writes remain on Firestore. A final reconciliation is required.
+
 ## Cutover requires additional work
 
 The existing website still reads and writes Firestore directly. Merely migrating
