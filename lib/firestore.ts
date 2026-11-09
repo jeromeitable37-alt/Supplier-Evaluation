@@ -286,9 +286,19 @@ export async function getUserProfile(uid?: string) {
 export async function ensureUserProfile(): Promise<UserProfile> {
   if (neonEnabled()) {
     const user=await signInToFirebase();
-    const record=await neonRead<Partial<UserProfile> | null>("profile");
-    if(!record) throw new Error("Your Purchasing account needs administrator approval before using Neon.");
-    return normalizeProfile(user,record);
+    try {
+      const record=await neonRead<Partial<UserProfile> | null>("profile");
+      if(!record)throw new Error("Your Purchasing account needs administrator approval before using Neon.");
+      return normalizeProfile(user,record);
+    }catch(error) {
+      const message=error instanceof Error?error.message:"";
+      if(!message.includes("not yet approved")&&!message.includes("needs administrator approval"))throw error;
+      // Verified Firebase users can request a pending profile, but never self-grant permissions.
+      await fetch("/api/neon-enroll",{
+        method:"POST",cache:"no-store",headers:{Authorization:"Bearer "+await user.getIdToken()},
+      });
+      throw new Error("Your account is pending Purchasing administrator approval for the Neon system.");
+    }
   }
   const firestore = requireDb();
   const user = await signInToFirebase();
