@@ -22,7 +22,7 @@ const TABLES = {
 type Collection = keyof typeof TABLES;
 
 function collectionName(value: unknown): Collection {
-  if (typeof value !== "string" || !(value in TABLES)) {
+  if (typeof value !== "string" || !Object.prototype.hasOwnProperty.call(TABLES,value)) {
     throw new AppAccessError("Unknown collection.", 400);
   }
   return value as Collection;
@@ -284,7 +284,7 @@ export async function POST(request: Request) {
       const roles=Array.isArray(input.roles)?[...new Set(input.roles.filter((r)=>["purchaser","requisitioner","amd_personnel"].includes(s(r))))]:[];
       if(!name||!email.includes("@")||!roles.length)throw new AppAccessError("Enter a valid name, email and evaluator role.",400);
       const normalized=name.toLowerCase().replace(/\s+/g," ");
-      let hash=0;for(const ch of normalized)hash=(hash*31+ch.charCodeAt(0))|0;
+      let hash=0;for(let i=0;i<normalized.length;i++)hash=(hash*31+normalized.charCodeAt(i))|0;
       const slug=normalized.replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,70)||"contact";
       const id=slug+"-"+Math.abs(hash).toString(36);
       const old=await findPayload(db,"evaluationContacts",id);
