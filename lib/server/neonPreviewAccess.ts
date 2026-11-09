@@ -38,9 +38,12 @@ export function getPreviewPool(): Pool {
       !/^ep-bitter-haze-b3p8g38w(?:-pooler)?\.c-4\.ap-southeast-1\.aws\.neon\.tech$/.test(parsed.hostname)) {
     return fail("This endpoint is restricted to the SISC migration-preview branch.", 503);
   }
+  // pg 8 treats sslmode=require as strict certificate verification, but
+  // pg 9 will change that behavior. Lock the current verify-full semantics.
+  parsed.searchParams.set("sslmode", "verify-full");
   if (!pool) {
     pool = new Pool({
-      connectionString,
+      connectionString: parsed.toString(),
       max: 3,
       idleTimeoutMillis: 10000,
       connectionTimeoutMillis: 10000,
