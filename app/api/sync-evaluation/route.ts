@@ -74,6 +74,10 @@ async function readDoc(sa: SA, token: string, collection: string, id: string): P
  * The Apps Script performs an idempotent upsert keyed by the evaluation ID.
  */
 export async function POST(request: Request) {
+  if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+      process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true") {
+    return NextResponse.json({ok:false,message:"School Sheet synchronization is disabled in Neon Preview until an approved test is configured."},{status:503});
+  }
   try {
     const { token } = await request.json();
     if (typeof token !== "string" || !/^[a-z0-9]{10,40}$/i.test(token)) {
