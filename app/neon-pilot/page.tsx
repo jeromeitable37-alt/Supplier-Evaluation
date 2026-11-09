@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { ArrowLeft, CheckCircle2, Database, LockKeyhole, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { firebaseConfigured, signInWithGoogle, subscribeAuth } from "../../lib/firebase";
 import type { User } from "firebase/auth";
+import NeonEvaluationExplorer from "../../components/NeonEvaluationExplorer";
 
 type PilotData = {
   ok: true;
@@ -192,6 +193,7 @@ export default function NeonPilotPage() {
                 ))}
               </div>
             </section>
+            {auditOk && user && <NeonEvaluationExplorer user={user} />}
           </>
         )}
         <div style={{ display: "flex", gap: 10, color: "#b8d4d0", alignItems: "center", lineHeight: 1.55, fontSize: 13 }}>
