@@ -34,6 +34,7 @@ import {
   PERMISSIONS,
 } from "../lib/firestore";
 import PurchaseOrderGenerator from "../components/PurchaseOrderGenerator";
+import { neonEnabled } from "../lib/neonClient";
 import AdvancedDashboard from "../components/AdvancedDashboard";
 import AdvancedReports from "../components/AdvancedReports";
 import {
@@ -586,7 +587,7 @@ export default function Home() {
         </div>
         <div className="workspace-chip">
           <span className="dot" />
-          {sidebar ? <><b>{settings.office}</b><small>Website database</small></> : null}
+          {sidebar ? <><b>{settings.office}</b><small>{neonEnabled() ? "Neon PostgreSQL Preview" : "Website database"}</small></> : null}
         </div>
         <nav className="side-nav">
           <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={page === "dashboard"} onClick={() => navigate("dashboard")} compact={!sidebar} />
@@ -608,7 +609,7 @@ export default function Home() {
         </nav>
         <div className="sidebar-bottom">
           <NavItem icon={<Settings size={18} />} label="Settings" active={page === "settings"} onClick={() => navigate("settings")} compact={!sidebar} />
-          {sidebar && <div className="secure-card"><ShieldCheck size={16} /><div><b>Firebase cloud database</b><span>Shared supplier records are stored in Firestore and available from your deployed site.</span></div></div>}
+          {sidebar && <div className="secure-card"><ShieldCheck size={16} /><div><b>{neonEnabled() ? "Neon PostgreSQL" : "Firebase cloud database"}</b><span>{neonEnabled() ? "Secure server-side PostgreSQL preview. Production stays on Firestore." : "Shared supplier records are stored in Firestore and available from your deployed site."}</span></div></div>}
         </div>
       </aside>
 
@@ -626,7 +627,7 @@ export default function Home() {
         </header>
 
         <div className="page-content">
-          {dbError && <div className="panel warning-panel firebase-warning"><AlertCircle size={18}/><div><b>Firebase connection needs setup</b><p>{dbError}</p><small>See the Firebase setup steps in the README included with this project.</small></div></div>}
+          {dbError && <div className="panel warning-panel firebase-warning"><AlertCircle size={18}/><div><b>{neonEnabled() ? "Neon preview connection needs attention" : "Firebase connection needs setup"}</b><p>{dbError}</p><small>{neonEnabled() ? "Verify your approved account and Neon Preview connection." : "See the Firebase setup steps in the README included with this project."}</small></div></div>}
           {page === "dashboard" && <AdvancedDashboard stats={stats} recent={recent} monthly={monthly} onScan={() => setScanOpen(true)} onNew={openNewEvaluation} onView={(r) => setViewing(r)} onViewAll={() => navigate("reports")} canScan={hasPermission("scan_forms")} canCreate={hasPermission("create_evaluations")} />}
           {page === "evaluations" && <Evaluations records={filtered} query={query} setQuery={setQuery} filterRecommendation={filterRecommendation} setFilterRecommendation={setFilterRecommendation} filterSupplier={filterSupplier} setFilterSupplier={setFilterSupplier} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} suppliers={suppliers} onEdit={setEditing} onView={setViewing} onDelete={removeEvaluation} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
           {page === "purchase-orders" && <PurchaseOrderGenerator workspaceName="Southville International School and Colleges" workspaceAddress={(settings as any).address || ""} workspaceEmail={(settings as any).email || ""} currentUser={authUser ? { uid: authUser.uid, email: authUser.email || "", displayName: userProfile?.displayName || authUser.displayName || "" } : null} canEdit={hasPermission("create_evaluations")} onNotify={notify} />}
@@ -643,7 +644,7 @@ export default function Home() {
       {editing && <EvaluationEditor value={editing} onCancel={() => setEditing(null)} onSave={saveEvaluation} supplierDirectory={suppliers} />}
       {viewing && <EvaluationViewer value={viewing} onClose={() => setViewing(null)} onEdit={() => { setEditing(viewing); setViewing(null); }} onDelete={() => removeEvaluation(viewing.id)} canEdit={hasPermission("edit_evaluations")} canDelete={hasPermission("delete_evaluations")} />}
       {scanOpen && <ScanModal busy={ocrBusy} error={scanError} onClose={() => { if (!ocrBusy) setScanOpen(false); }} onFile={scanFile} />}
-      {dbLoading && <div className="db-loading"><div className="loader-ring"/><div><b>Connecting to Firebase…</b><span>Loading your supplier evaluation database</span></div></div>}
+      {dbLoading && <div className="db-loading"><div className="loader-ring"/><div><b>{neonEnabled() ? "Connecting to Neon…" : "Connecting to Firebase…"}</b><span>Loading your supplier evaluation database</span></div></div>}
       {hasPermission("ai_support") && <button className="ai-fab" onClick={() => setAiOpen(true)}><Bot size={16}/> Ask Supplier AI</button>}
       {aiOpen && hasPermission("ai_support") && <AISupportDrawer stats={stats} records={records} prompt={aiPrompt} setPrompt={setAiPrompt} response={aiResponse} busy={aiBusy} messages={aiMessages} onAsk={askAI} onClose={() => setAiOpen(false)} onClear={() => { setAiMessages([]); setAiResponse(""); }} />}
       {toast && <div className="toast"><CheckCircle2 size={17} /> {toast}</div>}
