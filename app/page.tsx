@@ -599,6 +599,12 @@ export default function Home() {
           <NavItem icon={<UserCircle2 size={18} />} label="My Profile" active={page === "profile"} onClick={() => navigate("profile")} compact={!sidebar} />
           {hasPermission("database_management") && <><div className="nav-divider" /><NavItem icon={<Database size={18} />} label="Data Center" active={page === "data"} onClick={() => navigate("data")} compact={!sidebar} /></>}
           {userProfile?.role === "admin" && <NavItem icon={<Users size={18} />} label="Access & Permissions" active={page === "access"} onClick={() => navigate("access")} compact={!sidebar} />}
+          {userProfile?.role === "admin" && (
+            <a href="/neon-pilot" title="Read-only Neon migration preview"
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", color: "#65b7ab", textDecoration: "none", fontSize: 13 }}>
+              <Database size={18} /> {sidebar ? "Neon Migration Pilot" : null}
+            </a>
+          )}
         </nav>
         <div className="sidebar-bottom">
           <NavItem icon={<Settings size={18} />} label="Settings" active={page === "settings"} onClick={() => navigate("settings")} compact={!sidebar} />
