@@ -206,12 +206,57 @@ async function verifyRun() {
   );
   const saved = Number(row.rows[0]?.n || 0);
   if (saved !== total) throw new Error("Migration count mismatch; source read " + total + ", database stored " + saved + ".");
+
+  const mappedTables = {
+    users: ["se_users", "uid"],
+    purchaseOrders: ["se_purchase_orders", "id"],
+    evaluations: ["se_evaluations", "id"],
+    evaluationLinks: ["se_evaluation_links", "token"],
+    evaluationContacts: ["se_evaluation_contacts", "id"],
+    workspace: ["se_workspace", "id"],
+  };
+  const verified = { sourceDocuments: total, retainedSnapshots: saved };
+  for (const [collection, [table, idCol]] of Object.entries(mappedTables)) {
+    // All SQL identifiers come from this static allowlist, never user input.
+    const result = await sqlClient.query(
+      `SELECT
+         (SELECT count(*) FROM firestore_snapshots s
+          WHERE s.run_id = $1 AND s.collection_name = $2)::integer AS source_count,
+         (SELECT count(*) FROM ${table})::integer AS target_count,
+         (SELECT count(*) FROM firestore_snapshots s
+          LEFT JOIN ${table} t ON t.${idCol} = s.document_id
+          WHERE s.run_id = $1 AND s.collection_name = $2
+            AND (t.${idCol} IS NULL OR t.payload IS DISTINCT FROM s.payload))::integer AS mismatches,
+         (SELECT count(*) FROM ${table} t
+          WHERE NOT EXISTS
+            (SELECT 1 FROM firestore_snapshots s
+             WHERE s.run_id = $1 AND s.collection_name = $2
+               AND s.document_id = t.${idCol}))::integer AS unexpected_rows`,
+      [runId, collection],
+    );
+    const got = result.rows[0];
+    verified[collection] = got;
+    const expected = counts[collection] || 0;
+    if (Number(got.source_count) !== expected ||
+        Number(got.target_count) !== expected ||
+        Number(got.mismatches) !== 0 ||
+        Number(got.unexpected_rows) !== 0) {
+      throw new Error("Table reconciliation failed for " + collection +
+        ". Source/target counts or JSON payloads differ. Cutover must remain disabled.");
+    }
+  }
+  const other = await sqlClient.query(
+    "SELECT count(*)::integer AS n FROM firestore_extra_snapshots WHERE run_id=$1",
+    [runId],
+  );
+  verified.unmappedDocuments = Number(other.rows[0]?.n || 0);
   await sqlClient.query(
     `UPDATE migration_runs SET state='verified',expected_counts=$2::jsonb,
-       imported_counts=$2::jsonb,completed_at=now() WHERE id=$1`,
-    [runId,JSON.stringify(counts)],
+       imported_counts=$3::jsonb,completed_at=now() WHERE id=$1`,
+    [runId, JSON.stringify(counts), JSON.stringify(verified)],
   );
-  console.log("Verified document count:", saved);
+  console.log("Verified Firestore document count:", saved);
+  console.log("Verified normalized SQL table counts and payloads:", JSON.stringify(verified));
 }
 async function main() {
   assertSiscTarget();
