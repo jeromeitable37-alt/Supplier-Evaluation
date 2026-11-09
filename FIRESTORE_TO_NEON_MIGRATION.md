@@ -133,6 +133,26 @@ Vercel Preview build for commit `c1066b7` succeeded. This is an initial
 **read-only data view** from PostgreSQL, not a complete production CRUD
 migration. Live writes remain on Firestore. A final reconciliation is required.
 
+## Purchasing read-only integration (November 9, 2026)
+
+A further secured Preview-only step was deployed:
+
+- `/api/neon-purchase-orders` returns paginated, searchable purchase order
+  summaries (PO, PRF, supplier, status, order date and total); no employee email
+  addresses, attachment URLs, or raw JSON payloads are returned.
+- `/api/neon-link-summary` returns aggregate link counts grouped by evaluation
+  status and evaluator role. Opaque bearer tokens are never sent to the client.
+- `components/NeonPurchasingPreview.tsx` renders both read-only sections below
+  the verified evaluations list at `/neon-pilot`.
+- Both routes verify the Firebase identity token, then require a corresponding
+  active administrator in migrated Neon `se_users`.
+- Preview SQL was checked against the migrated records: six purchase orders and
+  seventeen evaluation links; deployed Preview branch build succeeded.
+
+**No PostgreSQL write endpoints have been enabled**. Existing forms, Google Sheets
+synchronization, PO uploads, staff profile management, and Production still
+operate through their earlier Firebase/external integrations.
+
 ## Cutover requires additional work
 
 The existing website still reads and writes Firestore directly. Merely migrating
