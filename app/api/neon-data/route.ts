@@ -100,7 +100,7 @@ export async function GET(request: Request) {
 async function upsertEvaluation(db: Pool | PoolClient, input: Record<string,unknown>) {
   const id = requireId(input.id);
   const old = await findPayload(db, "evaluations",id);
-  const payload = { ...(old||{}),...input,id };
+  const payload: Record<string,unknown> = { ...(old||{}),...input,id };
   await db.query(
     "INSERT INTO se_evaluations (id,po_number,supplier_name,evaluator_role,evaluation_date,final_rating,payload)"+
     " VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT (id) DO UPDATE SET "+
@@ -114,7 +114,7 @@ async function upsertEvaluation(db: Pool | PoolClient, input: Record<string,unkn
 async function upsertPO(db: Pool | PoolClient, input: Record<string,unknown>) {
   const id = requireId(input.id);
   const old = await findPayload(db,"purchaseOrders",id);
-  const payload = { ...(old||{}),...input,id };
+  const payload: Record<string,unknown> = { ...(old||{}),...input,id };
   await db.query(
     "INSERT INTO se_purchase_orders (id,po_number,prf_number,vendor_name,po_status,document_provider,payload)"+
     " VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT (id) DO UPDATE SET "+
@@ -128,7 +128,7 @@ async function upsertPO(db: Pool | PoolClient, input: Record<string,unknown>) {
 async function upsertLink(db: Pool | PoolClient, token: string, patch: Record<string,unknown>) {
   const previous = await findPayload(db, "evaluationLinks",token);
   if (!previous) throw new AppAccessError("Evaluation link not found.",404);
-  const payload = { ...previous,...patch,token };
+  const payload: Record<string,unknown> = { ...previous,...patch,token };
   await db.query(
     "UPDATE se_evaluation_links SET link_status=$2,evaluator_role=$3,po_number=$4,payload=$5::jsonb,imported_at=now() WHERE token=$1",
     [token,s(payload.status)||"pending",s(payload.evaluatorRole),
@@ -214,7 +214,7 @@ export async function POST(request: Request) {
       if (!old) throw new AppAccessError("Account not found.",404);
       const allowed=["displayName","department","jobTitle","phone","bio","photoURL"];
       const changed=Object.fromEntries(Object.entries(patch).filter(([k])=>allowed.includes(k)));
-      const updated={...old,...changed,uid:session.uid,updatedAt:new Date().toISOString()};
+      const updated:Record<string,unknown>={...old,...changed,uid:session.uid,updatedAt:new Date().toISOString()};
       await db.query("UPDATE se_users SET display_name=$2,payload=$3::jsonb,imported_at=now() WHERE uid=$1",
         [session.uid,s(updated.displayName),JSON.stringify(updated)]);
     } else if (action === "manageUser") {
