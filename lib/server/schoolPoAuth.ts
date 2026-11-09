@@ -1,4 +1,5 @@
 import { createSign } from "node:crypto";
+import { appSession, requireAdmin, AppAccessError } from "./neonAppAuth";
 
 /** Server-only authentication for the school PO Drive pilot (admin-only). */
 type SA = { project_id: string; client_email: string; private_key: string };
@@ -38,6 +39,16 @@ async function firestoreToken(sa: SA): Promise<string> {
 
 /** Checks Firebase ID token AND trusted active admin role in Firestore. */
 export async function requirePoDriveAdmin(request: Request): Promise<{ uid: string; email: string }> {
+  if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon") {
+    try {
+      const session=await appSession(request);
+      requireAdmin(session);
+      return {uid:session.uid,email:session.email};
+    }catch(error){
+      if(error instanceof AppAccessError)throw new PoDriveAuthError(error.message,error.status);
+      throw error;
+    }
+  }
   const bearer = /^Bearer\s+([A-Za-z0-9._-]+)$/.exec(request.headers.get("authorization") || "")?.[1];
   if (!bearer || bearer.length < 100 || bearer.length > 10000) {
     throw new PoDriveAuthError("Sign in as an authorized Purchasing administrator.", 401);
