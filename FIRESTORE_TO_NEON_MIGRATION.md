@@ -1,7 +1,9 @@
 # Supplier Evaluation: Firestore → Dedicated Neon PostgreSQL
 
-**State as of November 6, 2026:** target database and schemas prepared; **zero
-production school records have been copied**; Firebase remains the live source.
+**State as of November 9, 2026:** first authorized migration completed to
+`migration-preview`; **1,430 / 1,430 Firestore documents verified with zero
+mismatched records**. The live website still uses Firestore. The isolated
+Neon `production` branch has not received these records.
 
 ## Isolated infrastructure
 
@@ -9,9 +11,11 @@ production school records have been copied**; Firebase remains the live source.
 - Neon project ID: `purple-poetry-76396098`
 - Region: `aws-ap-southeast-1` (Singapore)
 - Database: `supplier_evaluation`
-- Branches: `production` (empty target schema) and `migration-preview` (empty staging schema)
-- Vercel: `DATABASE_URL` set as a **server-only Sensitive variable for the
-  upgrade Preview Git branch**, pointing to `migration-preview` (not Asylum).
+- Branches: `production` (empty target schema) and `migration-preview` (1,430-document verified staging snapshot)
+- Vercel: `DATABASE_URL` stored as a **server-only Sensitive variable scoped to
+  the upgrade Preview Git branch**, pointing to `migration-preview` (not Asylum).
+  The preview role password was rotated after accidental disclosure and the
+  branch-scoped Preview environment variable was updated. Never publish URLs.
 - SQL: `db/migrations/001_supplier_evaluation.sql` and
   `db/migrations/002_firestore_unmapped.sql`; both applied and verified.
 - CLI: `scripts/migrate-firestore-to-neon.mjs` for admin-authorized scan and
@@ -75,6 +79,39 @@ The importer rejects any database except `supplier_evaluation` on Neon.
 It writes in transactions, creates a migration audit run, records SHA-256
 checksums for preserved source documents, and checks written document counts.
 It never deletes or updates the original Firestore documents.
+
+## Verified first import (November 9, 2026)
+
+Run #1 state: `verified`. Independently checked in Neon:
+
+| Collection | Source documents | Neon typed records |
+| --- | ---: | ---: |
+| evaluations | 1,383 | 1,383 |
+| evaluationContacts | 17 | 17 |
+| evaluationLinks | 17 | 17 |
+| purchaseOrders | 6 | 6 |
+| users | 5 | 5 |
+| workspace | 2 | 2 |
+| **Total** | **1,430** | **1,430** |
+
+The importer also saved **1,430 snapshots**, reported **0 JSON payload
+mismatches**, **0 unexpected rows**, and **0 unmapped documents**. Existing
+Firestore documents were not changed by the import. This is a snapshot,
+not continuous synchronization; the source may change afterward.
+
+## Protected read-only website pilot
+
+The upgrade branch exposes `/neon-pilot` and `/api/neon-pilot`.
+This restricted route requires an existing Firebase ID token authenticated by
+Firebase Identity Toolkit plus a matching **active administrator** profile in
+Neon. It returns only server-side aggregate counts and migration audit status,
+never raw supplier/staff records or database credentials. It is restricted to
+the `migration-preview` Neon endpoint, not Production. Database credentials
+remain server-only in Vercel Preview; the client uses Firebase Auth.
+
+No data is written through this pilot. Production stays on Firestore until all
+CRUD workflows and public evaluation links have secured PostgreSQL replacements,
+the latest source delta has been reconciled, and the school owner approves cutover.
 
 ## Cutover requires additional work
 
