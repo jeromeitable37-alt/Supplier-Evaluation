@@ -1,5 +1,6 @@
 import { createSign } from "node:crypto";
 import { NextResponse } from "next/server";
+import { appPool } from "../../../lib/server/neonAppAuth";
 
 export const runtime = "nodejs";
 
@@ -84,12 +85,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, message: "School sheet integration is not configured." }, { status: 503 });
     }
 
-    const sa = account();
-    const auth = await accessToken(sa);
-    const [link, evaluation] = await Promise.all([
-      readDoc(sa, auth, "evaluationLinks", token),
-      readDoc(sa, auth, "evaluations", "public-" + token),
-    ]);
+    const useNeon = process.env.NEXT_PUBLIC_DATA_BACKEND === "neon";
+    let link: Record<string,any> | null = null;
+    let evaluation: Record<string,any> | null = null;
+    if (useNeon) {
+      // Client sends only opaque bearer token. Both records and integrity
+      // checks are always read from PostgreSQL on the trusted server.
+      const db = appPool();
+      const [links, rows] = await Promise.all([
+        db.query("SELECT payload FROM se_evaluation_links WHERE token=$1", [token]),
+        db.query("SELECT payload FROM se_evaluations WHERE id=$1", ["public-"+token]),
+      ]);
+      link = links.rows[0]?.payload || null;
+      evaluation = rows.rows[0]?.payload || null;
+    } else {
+      const sa = account();
+      const auth = await accessToken(sa);
+      [link, evaluation] = await Promise.all([
+        readDoc(sa, auth, "evaluationLinks", token),
+        readDoc(sa, auth, "evaluations", "public-" + token),
+      ]);
+    }
     if (!link || !evaluation || link.status !== "submitted" ||
         evaluation.publicToken !== token || evaluation.poNumber !== link.po?.poNumber ||
         evaluation.evaluatorRole !== (link.evaluatorRole || "requisitioner")) {
@@ -107,17 +123,59 @@ export async function POST(request: Request) {
       ratingRemarks: evaluation.ratingRemarks, customerSatisfaction: evaluation.customerSatisfaction,
     };
 
-    const response = await fetch(url, {
+    // Database-backed lease prevents repeated public calls from spamming the
+    // school webhook. The official Apps Script also upserts by evaluation ID.
+    if (useNeon) {
+      const claim = await appPool().query(
+        "INSERT INTO se_sheet_sync(evaluation_id,state,attempts,lock_expires_at) "+
+        "VALUES($1,'processing',1,now()+interval '2 minutes') "+
+        "ON CONFLICT(evaluation_id) DO UPDATE SET "+
+        "state='processing',attempts=se_sheet_sync.attempts+1,"+
+        "lock_expires_at=now()+interval '2 minutes',updated_at=now(),last_error='' "+
+        "WHERE se_sheet_sync.state <> 'done' "+
+        "AND (se_sheet_sync.lock_expires_at IS NULL OR se_sheet_sync.lock_expires_at < now()) "+
+        "RETURNING evaluation_id",
+        [payload.id],
+      );
+      if (claim.rowCount !== 1) {
+        const existing = await appPool().query(
+          "SELECT state,sheet_name FROM se_sheet_sync WHERE evaluation_id=$1",[payload.id]);
+        if(existing.rows[0]?.state==="done") {
+          return NextResponse.json({ok:true,evaluationId:payload.id,
+            sheet:existing.rows[0].sheet_name||"WEB_EVALUATIONS",alreadySynced:true});
+        }
+        return NextResponse.json({ok:false,message:"Synchronization is already in progress. Retry later."},{status:429});
+      }
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
       method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ action: "sync_evaluation", secret, evaluation: payload }),
     });
+    } catch (error) {
+      if (useNeon) await appPool().query(
+        "UPDATE se_sheet_sync SET state='failed',lock_expires_at=NULL,last_error=$2,updated_at=now() WHERE evaluation_id=$1",
+        [payload.id,error instanceof Error?error.message.slice(0,150):"Webhook connection failed"],
+      );
+      throw error;
+    }
     const raw = await response.text();
     let result: any = {};
     try { result = JSON.parse(raw); } catch {}
     if (!response.ok || !result.ok) {
+      if (useNeon) await appPool().query(
+        "UPDATE se_sheet_sync SET state='failed',lock_expires_at=NULL,last_error=$2,updated_at=now() WHERE evaluation_id=$1",
+        [payload.id,String(result.message || "Google Apps Script rejected the evaluation sync.").slice(0,150)],
+      );
       throw new Error(String(result.message || "Google Apps Script rejected the evaluation sync."));
     }
+    if (useNeon) await appPool().query(
+      "UPDATE se_sheet_sync SET state='done',lock_expires_at=NULL,sheet_name=$2,last_error='',updated_at=now() WHERE evaluation_id=$1",
+      [payload.id, String(result.sheet || "WEB_EVALUATIONS").slice(0,120)],
+    );
     return NextResponse.json({ ok: true, evaluationId: payload.id, sheet: result.sheet || "WEB_EVALUATIONS" });
   } catch (error) {
     console.error("Evaluation sheet sync failed:", error instanceof Error ? error.message : error);
