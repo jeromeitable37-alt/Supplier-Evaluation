@@ -18,14 +18,13 @@ export async function GET(request: Request) {
     const pageRaw = Number(url.searchParams.get("page") || "1");
     const page = Number.isSafeInteger(pageRaw) && pageRaw >= 1 && pageRaw <= MAX_PAGE ? pageRaw : 1;
     const search = String(url.searchParams.get("search") || "").trim().slice(0, 90);
-    // Escape PostgreSQL LIKE metacharacters; search remains a literal substring.
-    const escapedSearch = search.replace(/[\\%_]/g, "\\$&");
+    // STRPOS performs literal substring matching: user input is never a SQL pattern.
     const filter = `
       WHERE ($1::text = ''
-        OR COALESCE(NULLIF(e.payload->>'supplier', ''), e.supplier_name) ILIKE '%' || $1 || '%' ESCAPE '\\'
-        OR e.po_number ILIKE '%' || $1 || '%' ESCAPE '\\'
-        OR e.id ILIKE '%' || $1 || '%' ESCAPE '\\'
-        OR COALESCE(e.payload->>'prfNo', '') ILIKE '%' || $1 || '%' ESCAPE '\\'
+        OR strpos(lower(COALESCE(NULLIF(e.payload->>'supplier', ''), e.supplier_name)), lower($1)) > 0
+        OR strpos(lower(e.po_number), lower($1)) > 0
+        OR strpos(lower(e.id), lower($1)) > 0
+        OR strpos(lower(COALESCE(e.payload->>'prfNo', '')), lower($1)) > 0
       )
     `;
 
@@ -44,9 +43,9 @@ export async function GET(request: Request) {
          ORDER BY NULLIF(COALESCE(NULLIF(e.payload->>'evaluationDate', ''), e.evaluation_date), '') DESC NULLS LAST,
                   e.id ASC
          LIMIT $2 OFFSET $3`,
-        [escapedSearch, PAGE_SIZE, (page - 1) * PAGE_SIZE],
+        [search, PAGE_SIZE, (page - 1) * PAGE_SIZE],
       ),
-      pool.query(`SELECT count(*)::integer AS total FROM se_evaluations e ${filter}`, [escapedSearch]),
+      pool.query(`SELECT count(*)::integer AS total FROM se_evaluations e ${filter}`, [search]),
     ]);
 
     return NextResponse.json({
