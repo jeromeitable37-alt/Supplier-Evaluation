@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { appSession, requirePermission, appPool, AppAccessError } from "../../../lib/server/neonAppAuth";
 import { officialPoAttachmentName } from "../../../lib/poAttachmentName";
 
 const DEFAULT_SHEET_ID = "1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA";
@@ -139,7 +140,48 @@ async function sendViaAppsScript(input: {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body = await request.json();
+    if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon") {
+      const session = await appSession(request);
+      requirePermission(session,"create_evaluations");
+      const submittedUrl = String(body?.evaluationUrl || "");
+      let parsed: URL;
+      try { parsed = new URL(submittedUrl); }
+      catch { throw new AppAccessError("Invalid evaluation link.",400); }
+      const requestUrl=new URL(request.url);
+      if(parsed.protocol!=="https:"||parsed.host!==requestUrl.host ||
+        !/^\/evaluate\/[a-zA-Z0-9]{10,40}$/.test(parsed.pathname)) {
+        throw new AppAccessError("Evaluation link must belong to this system.",403);
+      }
+      const token=parsed.pathname.split("/").pop() || "";
+      const found=await appPool().query("SELECT payload FROM se_evaluation_links WHERE token=$1",[token]);
+      const link=found.rows[0]?.payload as Record<string,any>|undefined;
+      if(!link||link.status!=="pending"||!link.po?.poNumber||!link.evaluatorEmail){
+        throw new AppAccessError("The evaluation link is unavailable or already completed.",409);
+      }
+      // Disallow changing recipient, document URLs, PO metadata and link role
+      // through an untrusted browser request. Reconstruct from trusted SQL.
+      const storedPo=link.po as Record<string,any>;
+      body = {
+        name:link.evaluatorName||"Evaluator",
+        evaluatorRole:link.evaluatorRole||"requisitioner",
+        evaluatorName:link.evaluatorName||"Evaluator",
+        evaluatorEmail:link.evaluatorEmail,
+        requisitionerName:link.requisitionerName,
+        requisitionerEmail:link.requisitionerEmail,
+        amdName:link.amdName,amdEmail:link.amdEmail,
+        po:storedPo,
+        poDocumentUrl:storedPo.documentUrl,
+        poDocumentName:storedPo.documentName||String(storedPo.poNumber)+".pdf",
+        poDocuments:storedPo.documentPages||[{
+          url:storedPo.documentUrl,
+          name:storedPo.documentName||String(storedPo.poNumber)+".pdf",
+          mimeType:storedPo.documentMimeType,
+        }],
+        evaluationUrl:submittedUrl,
+        workspace:{name:link.workspaceName||"Southville International School and Colleges"},
+      };
+    }
     const {
       name,
       po,
