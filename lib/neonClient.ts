@@ -60,7 +60,7 @@ export function neonWatch<T>(collection:string,
   const onVisible=()=>{if(typeof document!=="undefined"&&document.visibilityState==="visible")void update();};
   void update();
   // Polling is a temporary compatibility bridge; secure SQL server is source of truth.
-  const timer=typeof window!=="undefined"?window.setInterval(()=>void update(),30000):null;
+  const timer=typeof window!=="undefined"?window.setInterval(()=>{if(document.visibilityState==="visible")void update();},120000):null;
   if(typeof window!=="undefined"){
     window.addEventListener("supplier-neon-changed",onChanged);
     window.addEventListener("focus",onFocus);
