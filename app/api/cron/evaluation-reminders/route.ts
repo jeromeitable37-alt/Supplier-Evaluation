@@ -1,5 +1,6 @@
 import { createSign } from "node:crypto";
 import { NextResponse } from "next/server";
+import { appPool } from "../../../../lib/server/neonAppAuth";
 import { officialPoAttachmentName } from "../../../../lib/poAttachmentName";
 
 export const runtime = "nodejs";
@@ -278,6 +279,92 @@ async function sendPendingLinkEmail(
   return recipient;
 }
 
+async function runNeonReminders(request: Request) {
+  // Uses migrated evaluation links, not the Firestore service account.
+  // CRON_SECRET and the original school Apps Script sender are still required.
+  const db=appPool();
+  const rows=await db.query("SELECT token,payload FROM se_evaluation_links ORDER BY token ASC");
+  const records=rows.rows.map(r=>({token:String(r.token),link:r.payload as EvaluationLink}));
+  const roleKey=(link:EvaluationLink)=>
+    String(link.po?.poNumber||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"")+"::"+
+    String(link.evaluatorRole||"requisitioner");
+  const completed=new Set(records.filter(x=>x.link.status==="submitted").map(x=>roleKey(x.link)));
+  const day=manilaDay(new Date());
+  const emailedToday=new Set(records.filter(x=>
+    x.link.lastReminderAttemptDay===day ||
+    dateInManilaDay(x.link.lastEmailSentAt||x.link.emailSentAt)===day)
+    .map(x=>roleKey(x.link)));
+  const candidates=records.filter(x=>
+    x.link.status==="pending" &&
+    !completed.has(roleKey(x.link)) &&
+    !emailedToday.has(roleKey(x.link)) &&
+    x.link.remindersEnabled!==false &&
+    isEmail(x.link.evaluatorEmail) &&
+    Boolean(x.link.po?.poNumber) &&
+    Boolean(x.link.po?.documentUrl||x.link.po?.documentPages?.length))
+    .sort((a,b)=>String(a.link.lastEmailSentAt||a.link.createdAt||"").localeCompare(
+      String(b.link.lastEmailSentAt||b.link.createdAt||"")));
+  const roles=new Set<string>();
+  const unique=candidates.filter(x=>{const k=roleKey(x.link);if(roles.has(k))return false;roles.add(k);return true;});
+  const rawLimit=Number(process.env.MAX_DAILY_EVALUATION_EMAILS||100);
+  const maxDaily=Number.isFinite(rawLimit)?Math.min(250,Math.max(1,Math.trunc(rawLimit))):100;
+  const queue=unique.slice(0,maxDaily);
+  const stats={checked:records.length,pending:unique.length,attempted:0,sent:0,skipped:0,failed:0};
+  const failures:string[]=[];
+  for(const candidate of queue){
+    const client=await db.connect();
+    let claimed:EvaluationLink|null=null;
+    try {
+      await client.query("BEGIN");
+      const locked=await client.query(
+        "SELECT payload,link_status FROM se_evaluation_links WHERE token=$1 FOR UPDATE",[candidate.token]);
+      const current=locked.rows[0]?.payload as EvaluationLink|undefined;
+      const currentStatus=locked.rows[0]?.link_status;
+      const evals=await client.query("SELECT 1 FROM se_evaluations WHERE id=$1 LIMIT 1",
+        ["public-"+candidate.token]);
+      if(!current || currentStatus!=="pending" ||
+        current.lastReminderAttemptDay===day ||
+        dateInManilaDay(current.lastEmailSentAt||current.emailSentAt)===day ||
+        current.remindersEnabled===false || evals.rowCount){
+        await client.query("ROLLBACK");
+        stats.skipped++;
+        continue;
+      }
+      claimed={...current,lastReminderAttemptDay:day};
+      await client.query(
+        "UPDATE se_evaluation_links SET payload=$2::jsonb,imported_at=now() WHERE token=$1",
+        [candidate.token,JSON.stringify(claimed)]);
+      await client.query("COMMIT");
+      stats.attempted++;
+      const isReminder=Boolean(current.emailSentAt);
+      const recipient=await sendPendingLinkEmail(current,candidate.token,new URL(request.url).origin,isReminder);
+      const now=new Date().toISOString();
+      const patch={
+        lastEmailSentAt:now,lastEmailRecipient:recipient,lastReminderAt:now,
+        emailSendStatus:"sent",reminderCount:Number(current.reminderCount||0)+(isReminder?1:0),
+        lastReminderError:"",...(isReminder?{}:{emailSentAt:now}),
+      };
+      await db.query(
+        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() WHERE token=$1",
+        [candidate.token,JSON.stringify(patch)]);
+      stats.sent++;
+    }catch(error){
+      try{await client.query("ROLLBACK");}catch{}
+      stats.failed++;
+      const message=error instanceof Error?error.message:String(error);
+      failures.push("Pending evaluation reminder failed: "+message.slice(0,160));
+      if(claimed){
+        try{await db.query(
+          "UPDATE se_evaluation_links SET payload=payload || $2::jsonb WHERE token=$1",
+          [candidate.token,JSON.stringify({lastReminderError:message.slice(0,250)})]);
+        }catch{}
+      }
+    }finally{client.release();}
+  }
+  return NextResponse.json({ok:true,backend:"neon",runDay:day,...stats,
+    deferred:Math.max(0,unique.length-queue.length),errors:failures.slice(0,12)});
+}
+
 export async function GET(request: Request) {
   const secret = String(process.env.CRON_SECRET || "").trim();
   if (!secret) return NextResponse.json({ ok: false, error: "CRON_SECRET is not configured." }, { status: 503 });
@@ -291,6 +378,9 @@ export async function GET(request: Request) {
   }
 
   try {
+    if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon") {
+      return await runNeonReminders(request);
+    }
     const account = getCredentials();
     const accessToken = await googleAccessToken(account);
     const allDocs = await listEvaluationLinks(account.project_id, accessToken);
