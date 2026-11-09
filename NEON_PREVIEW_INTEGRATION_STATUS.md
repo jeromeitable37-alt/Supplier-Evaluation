@@ -17,6 +17,12 @@ Vercel Preview Git branch `upgrade/iso-evaluation-sync-20261106` is configured:
 - `DATABASE_URL`: Sensitive, server-only, scoped to this Preview branch,
   pointing to the pooled Neon `migration-preview` connection.
 - `NEXT_PUBLIC_DATA_BACKEND=neon`: Preview branch only.
+- School-facing external effects (evaluation emails, official Google Sheet writes,
+  scheduled reminder emails) **fail closed by default** in Preview. They require
+  the **server-only** `NEON_PREVIEW_EXTERNAL_WRITES_ENABLED=true` switch for
+  a separately approved test, and are currently **disabled**. This switch is
+  not configured in Vercel and must NOT be exposed as `NEXT_PUBLIC_*`.
+- Preview main dashboard and public forms display a clearly visible TEST warning.
 - Production has **no Neon data backend cutover flag** and remains Firestore.
 
 ## Existing website integration
@@ -55,6 +61,8 @@ Implemented Preview flows:
    when Preview flag is enabled. `PO_DRIVE_UPLOAD_ENABLED` remains false.
 10. Preview archive `/neon-pilot` and SQL explorer remain admin-only and
     read-only; live integrated application at `/` is separate.
+
+**QA status:** Compilation/build is not equivalent to live workflow acceptance. Existing main website CRUD and public submissions have not been tested end-to-end with authenticated staff and controlled test records. Do not claim Production cutover readiness based on this build alone.
 
 ## Restrictions and release gates
 
