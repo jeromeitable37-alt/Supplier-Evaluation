@@ -31,6 +31,7 @@ import {
   type EvaluationContactRole,
 } from "../lib/firestore";
 import { cloudinaryConfigured, getCloudinarySetupMessage, uploadPoDocumentToCloudinary, type CloudinaryPoDocument } from "../lib/cloudinary";
+import { auth } from "../lib/firebase";
 
 export type PurchaseOrderSheetMatch = {
   poNumber: string;
@@ -996,9 +997,10 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       setCreatedLinks((prev) => ({ ...prev, [role]: link }));
     }
 
+    const firebaseToken=await auth?.currentUser?.getIdToken();
     const response = await fetch("/api/send-evaluation", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(firebaseToken?{Authorization:"Bearer "+firebaseToken}:{}) },
       body: JSON.stringify({
         name: targetName,
         evaluatorRole: role,
