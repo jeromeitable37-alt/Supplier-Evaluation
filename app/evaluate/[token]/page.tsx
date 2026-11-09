@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
+import { neonEnabled } from "../../../lib/neonClient";
 
 const labels = ["Poor", "Below Average", "Average", "Good", "Excellent"];
 type EvaluationCriterion = readonly [string, string, string];
@@ -145,6 +146,9 @@ export default function EvaluationPage() {
   const computedItemTotal = itemAmounts.reduce((sum, item) => sum + (item.lineTotal || 0), 0);
   const displayTotal = parseAmount(po.total) || computedItemTotal || parseAmount(po.subtotal) || 0;
   return <div className="public-eval-shell"><div className="public-eval-wrap">
+    {neonEnabled() && <div role="status" style={{ padding: "12px 16px", marginBottom: 16, borderRadius: 9, border: "1px solid #e0b45e", background: "#fff5dd", color: "#624514", fontWeight: 600, fontSize: 13 }}>
+      NEON MIGRATION PREVIEW — Test submissions here are saved to the preview database only. This is not the official live evaluation form.
+    </div>}
     <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>{evaluatorLabel} confirmation and supplier feedback</p></div></section>
     <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>Php {parseAmount(displayTotal).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
     <section className="public-delivery-strip"><div><span>Expected delivery</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Actual delivery</span><strong>{po.actualDeliveryDate || "—"}</strong></div><div><span>Delivery lead time</span><strong>{leadTimeDays !== null ? `${leadTimeDays} day${leadTimeDays === 1 ? "" : "s"}` : "—"}</strong></div><div><span>PO status</span><strong>{po.status || "Pending"}</strong></div><div><span>Received by</span><strong>{po.receivedBy || "—"}</strong></div></section>
