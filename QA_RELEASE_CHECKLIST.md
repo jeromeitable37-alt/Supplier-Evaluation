@@ -21,16 +21,32 @@ From Google Cloud Shell in the `Supplier-Evaluation` folder:
 
 ```bash
 git pull --ff-only
-node scripts/qa-preview-http.mjs
+npm install -g vercel
+vercel login
+vercel whoami
+node scripts/qa-preview-http.mjs --vercel-cli
 ```
 
-This makes thirteen anonymous, **non-destructive** HTTP requests to the
-fixed Vercel upgrade Preview hostname. It verifies that private APIs return
-401, unknown public links return 404, and external school side effects return
-503. It never requires personal credentials or real record values.
+**Important:** Preview is protected by Vercel Authentication (SSO) in
+the project settings. The earlier unauthenticated Cloud Shell test got 302
+redirects and Vercel 401s before reaching the app. Those were **not**
+proof of broken application authorization. The revised script calls
+`vercel curl` using the CLI's existing authorized login; it does not
+disable deployment protection, request or print a bypass token, or create
+school records.
 
-**Expected:** `13 PASS; 0 FAIL`. If any check fails, stop and investigate.
-This is *not* a substitute for authenticated functional QA.
+If `vercel whoami` says you are logged out, complete the normal browser
+login flow. If the login belongs to a different Vercel team, stop rather
+than broadening project permissions. No new database password is required.
+
+The thirteen checks are **non-destructive HTTP tests**: protected app
+routes should return 401, unknown public links 404, external school effects
+503, and public pages 200. No Firebase ID token is supplied, even though
+Vercel itself authenticates the request.
+
+**Expected:** `13 PASS; 0 FAIL`. Any failed check after successfully
+passing Vercel Authentication needs investigation. This is *not*
+a substitute for authenticated functional QA.
 
 ## B. Controlled functional tests — Preview only
 
