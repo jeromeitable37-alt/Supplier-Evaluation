@@ -139,6 +139,7 @@ async function sendViaAppsScript(input: {
 }
 
 export async function POST(request: Request) {
+  let claimedToken = "";
   try {
     let body = await request.json();
     if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon") {
@@ -161,6 +162,24 @@ export async function POST(request: Request) {
       }
       // Disallow changing recipient, document URLs, PO metadata and link role
       // through an untrusted browser request. Reconstruct from trusted SQL.
+      // Atomic per-link email claim: no concurrent or rapid repeat sends.
+      // One resend is allowed after the ten-minute cooldown.
+      const now=new Date();
+      const expiredSending=new Date(now.getTime()-2*60*1000).toISOString();
+      const cooldown=new Date(now.getTime()-10*60*1000).toISOString();
+      const sending=await appPool().query(
+        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() "+
+        "WHERE token=$1 AND link_status='pending' AND "+
+        "(COALESCE(payload->>'emailSendStatus','') <> 'sending' "+
+        "OR COALESCE(payload->>'emailSendingStartedAt','') < $3) AND "+
+        "(COALESCE(payload->>'lastEmailSentAt','') < $4) RETURNING token",
+        [token,JSON.stringify({emailSendStatus:"sending",emailSendingStartedAt:now.toISOString()}),
+         expiredSending,cooldown],
+      );
+      if(sending.rowCount!==1){
+        throw new AppAccessError("Email request is already processing or was sent recently. Please try later.",429);
+      }
+      claimedToken=token;
       const storedPo=link.po as Record<string,any>;
       body = {
         name:link.evaluatorName||"Evaluator",
@@ -270,6 +289,14 @@ export async function POST(request: Request) {
     ].join("\n\n");
 
     const sent = await sendViaAppsScript({ to: resolvedTo, subject, html, text, attachments });
+    if (claimedToken) {
+      const now=new Date().toISOString();
+      await appPool().query(
+        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() WHERE token=$1",
+        [claimedToken,JSON.stringify({emailSendStatus:"sent",emailSentAt:now,
+          lastEmailSentAt:now,lastEmailRecipient:resolvedTo})],
+      );
+    }
     return NextResponse.json({
       ok: true,
       sent: true,
@@ -282,6 +309,15 @@ export async function POST(request: Request) {
       providerMessage: sent?.message || "Email sent through Google Apps Script.",
     });
   } catch (error) {
-    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Unable to send evaluation email." }, { status: 500 });
+    if (claimedToken) {
+      try {
+        await appPool().query(
+          "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() WHERE token=$1",
+          [claimedToken,JSON.stringify({emailSendStatus:"failed"})],
+        );
+      } catch { /* Keep original send error */ }
+    }
+    const status = error instanceof AppAccessError ? error.status : 502;
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Unable to send evaluation email." }, { status });
   }
 }
