@@ -139,6 +139,10 @@ async function sendViaAppsScript(input: {
 }
 
 export async function POST(request: Request) {
+  if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+      process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true") {
+    return NextResponse.json({ok:false,message:"School email delivery is disabled in Neon Preview until an approved test is configured."},{status:503});
+  }
   let claimedToken = "";
   try {
     let body = await request.json();
