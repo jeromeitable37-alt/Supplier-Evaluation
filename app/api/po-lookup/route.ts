@@ -297,7 +297,7 @@ function buildFlatPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
       buyerName: pick(row, ["Buyer", "Buyer Name", "Purchaser", "Prepared By", "buyer_name"]),
       buyerEmail: pick(row, ["Buyer Email", "Purchaser Email"]),
       requisitioner: pick(row, ["Requisitioner", "Requisitioner Name"]),
-      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email"]),
+      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email", "Email Address"]),
       department: pick(row, ["Department"]),
       purpose: pick(row, ["Purpose"]),
       quantity: pickNumber(row, ["Qty", "Quantity", "qty"]),
