@@ -8,8 +8,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Vercel invokes this endpoint daily at 00:00 UTC = 08:00 Asia/Manila.
-// In Vercel Hobby, invocation can occur anywhere within that hour.
+// Vercel invokes this endpoint daily at 01:00 UTC = 09:00 Asia/Manila.
+// On Hobby, actual invocation may occur later within the scheduled hour.
 type ServiceAccount = {
   project_id: string;
   client_email: string;
@@ -300,6 +300,7 @@ async function runNeonReminders(request: Request) {
     .map(x=>roleKey(x.link)));
   const candidates=records.filter(x=>
     x.link.status==="pending" &&
+    Boolean(x.link.emailSentAt) &&
     !completed.has(roleKey(x.link)) &&
     !emailedToday.has(roleKey(x.link)) &&
     x.link.remindersEnabled!==false &&
@@ -327,7 +328,7 @@ async function runNeonReminders(request: Request) {
       const currentStatus=locked.rows[0]?.link_status;
       const evals=await client.query("SELECT 1 FROM se_evaluations WHERE id=$1 LIMIT 1",
         ["public-"+candidate.token]);
-      if(!current || currentStatus!=="pending" ||
+      if(!current || currentStatus!=="pending" || !current.emailSentAt ||
         current.lastReminderAttemptDay===day ||
         dateInManilaDay(current.lastEmailSentAt||current.emailSentAt)===day ||
         current.remindersEnabled===false || evals.rowCount){
@@ -341,7 +342,7 @@ async function runNeonReminders(request: Request) {
         [candidate.token,JSON.stringify(claimed)]);
       await client.query("COMMIT");
       stats.attempted++;
-      const isReminder=Boolean(current.emailSentAt);
+      const isReminder=true;
       const recipient=await sendPendingLinkEmail(current,candidate.token,new URL(request.url).origin,isReminder);
       const now=new Date().toISOString();
       const patch={
@@ -378,6 +379,10 @@ async function runNeonReminders(request: Request) {
 }
 
 export async function GET(request: Request) {
+  // Never send school reminder emails from Preview or Development deployments.
+  if (process.env.VERCEL_ENV !== "production") {
+    return NextResponse.json({ok:false,error:"School reminders run on Production only."},{status:403});
+  }
   if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
       process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true") {
     return NextResponse.json({ok:false,error:"Neon Preview reminders are disabled until an approved mail test is configured."},{status:503});
@@ -416,6 +421,7 @@ export async function GET(request: Request) {
     const pending = records
       .filter(({ link }) =>
         link.status === "pending" &&
+        Boolean(link.emailSentAt) &&
         !completedRoles.has(roleKey(link)) &&
         !emailedTodayRoles.has(roleKey(link)) &&
         link.remindersEnabled !== false &&
@@ -459,7 +465,7 @@ export async function GET(request: Request) {
           // Atomic, updateTime-guarded claim prevents duplicate emails from overlapping cron runs.
           claimed = await patchDocument(item.doc, accessToken, { lastReminderAttemptDay: day }, item.doc.updateTime);
           stats.attempted++;
-          const isReminder = Boolean(link.emailSentAt);
+          const isReminder = true;
           const recipient = await sendPendingLinkEmail(link, token, new URL(request.url).origin, isReminder);
           const now = new Date().toISOString();
           const changes: Record<string, string | number> = {
