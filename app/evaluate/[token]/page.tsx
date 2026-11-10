@@ -187,7 +187,7 @@ export default function EvaluationPage() {
   const computedItemTotal = itemAmounts.reduce((sum, item) => sum + (item.lineTotal || 0), 0);
   const displayTotal = parseAmount(po.total) || computedItemTotal || parseAmount(po.subtotal) || 0;
   return <div className="public-eval-shell"><div className="public-eval-wrap">
-    {neonEnabled() && <div role="status" style={{ padding: "12px 16px", marginBottom: 16, borderRadius: 9, border: "1px solid #e0b45e", background: "#fff5dd", color: "#624514", fontWeight: 600, fontSize: 13 }}>
+    {neonEnabled() && <div role="status" className="public-eval-demo-notice">
       TEST VERSION — Responses submitted here are for testing only and are not official evaluations.
     </div>}
     <section className="public-eval-header">
@@ -256,7 +256,7 @@ export default function EvaluationPage() {
     </section>
 
     {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p>
-    {syncWarning && <p style={{ color: "#9a3412", fontSize: 12 }}>{syncWarning}</p>}</section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>SUPPLIER PERFORMANCE REVIEW</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} Evaluation</h2><p>Rate each criterion from 1 (Poor) to 5 (Excellent). Check the purchase information above before submitting.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}
+    {syncWarning && <p className="public-eval-sync-warning">{syncWarning}</p>}</section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>SUPPLIER PERFORMANCE REVIEW</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} Evaluation</h2><p>Rate each criterion from 1 (Poor) to 5 (Excellent). Check the purchase information above before submitting.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}
         {scores[id] > 0 && scores[id] < 4 && <label className="public-rating-reason">
           Reason for rating below 4 (required)
           <textarea className="public-rating-textarea"
