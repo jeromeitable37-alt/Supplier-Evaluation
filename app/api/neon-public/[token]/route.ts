@@ -24,7 +24,7 @@ export async function GET(_request: Request,ctx: Context) {
     const link=result.rows[0]?.payload;
     if (!link) throw new AppAccessError("Evaluation link is invalid or unavailable.",404);
     const expiry=typeof link.expiresAt==="string"?Date.parse(link.expiresAt):NaN;
-    if(link.status==="pending"&&Number.isFinite(expiry)&&expiry<=Date.now()){
+    if(Number.isFinite(expiry)&&expiry<=Date.now()){
       return NextResponse.json({ok:false,message:"This evaluation link has expired. Please contact the Purchasing Office."},
         {status:410,headers:{"Cache-Control":"no-store"}});
     }
