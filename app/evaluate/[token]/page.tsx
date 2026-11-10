@@ -117,7 +117,8 @@ export default function EvaluationPage() {
       if(neonEnabled()){
         // Neon performs the school Sheet upsert on the server after the record
         // has been committed. A separate browser webhook call is not needed.
-        if(submission.sheetSync!=="synced"&&submission.sheetSync!=="already_synced"){
+        const state="sheetSync" in submission ? submission.sheetSync : undefined;
+        if(state!=="synced"&&state!=="already_synced"){
           setSyncWarning("Your evaluation is safely saved. Official Google Sheet delivery is queued for an authorized retry.");
         }else{
           setSyncWarning("");
