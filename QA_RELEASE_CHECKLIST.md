@@ -1,5 +1,5 @@
 # Supplier Evaluation — Final QA & Production Release Gates
-Last updated: November 9, 2026
+Last updated: November 10, 2026
 
 ## Current verified state
 
@@ -14,6 +14,30 @@ application still uses Firestore.
 evaluation link/public submission, duplicate replay, test PO file storage,
 scheduled email, external school email/Sheet sync, same-day Firestore delta,
 final backup and rollback. A Vercel READY build is not proof of these flows.
+
+## Automated smoke test verified — November 10, 2026
+
+The authorized operator ran:
+
+```bash
+node scripts/qa-preview-http.mjs --vercel-cli
+```
+
+**Observed result:** `13 PASS; 0 FAIL; 0 BLOCKED; total: 13`.
+
+This verifies the two Preview pages return HTTP 200, seven protected read/write
+API checks deny requests without Firebase credentials using HTTP 401, the
+unrecognized public token returns HTTP 404, and external mail, Sheets and
+reminder operations fail closed with HTTP 503. In addition, unknown user
+enrollment is confirmed inaccessible without authentication.
+
+No application records, external emails, or Google Sheets were modified
+by this test. The previous SSO-related 302 was absent on the successful run.
+
+**Scope:** Anonymous HTTP checks only. Does not constitute authenticated
+create/edit/delete, test-account role testing, actual public submission,
+duplicate prevention under concurrent requests, or external delivery QA.
+Do not merge into Production based solely on this milestone.
 
 ## A. Run non-destructive security smoke test
 
@@ -44,7 +68,7 @@ routes should return 401, unknown public links 404, external school effects
 503, and public pages 200. No Firebase ID token is supplied, even though
 Vercel itself authenticates the request.
 
-**Expected:** `13 PASS; 0 FAIL`. Any failed check after successfully
+**Achieved:** `13 PASS; 0 FAIL; 0 BLOCKED` on November 10, 2026. Any future failed check after successfully
 passing Vercel Authentication needs investigation. This is *not*
 a substitute for authenticated functional QA.
 
