@@ -341,11 +341,11 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         cache:"no-store",headers:{Authorization:"Bearer "+bearer},
       });
       const body=await result.json();
-      if(!result.ok||!body.ok)throw new Error(body.message||"School Drive diagnostic is unavailable.");
+      if(!result.ok||!body.ok)throw new Error(body.message||"Document access check is unavailable.");
       setSchoolDriveEnabled(Boolean(body.canUpload));
-      setSchoolDriveMessage(String(body.message||"School Drive setup needs approval."));
+      setSchoolDriveMessage(String(body.message||"Document access requires administrator approval."));
     }catch(error){
-      setSchoolDriveMessage(error instanceof Error?error.message:"School Drive is unavailable.");
+      setSchoolDriveMessage(error instanceof Error?error.message:"Document access is unavailable.");
     }finally{setSchoolDriveChecking(false);}
   }
 
@@ -364,7 +364,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     setPrivatePoMime("");
     setPrivatePoError("");
     if(!/^[A-Za-z0-9_-]{15,150}$/.test(fileId)){
-      setPrivatePoError("The stored PO does not have a valid school Drive file ID.");
+      setPrivatePoError("The saved PO document reference is incomplete. Contact the Purchasing administrator.");
       return;
     }
     setPrivatePoLoading(true);
@@ -1019,7 +1019,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       await savePurchaseOrderCloud(enriched);
       await syncPendingEvaluationLinks(enriched);
       const priceFound = extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0;
-      onNotify(`Official PO ${enriched.poNumber || "record"} stored in private school Google Drive${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
+      onNotify(`Official PO ${enriched.poNumber || "record"} saved successfully${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "Could not store the PO document.");
     } finally {
@@ -1172,7 +1172,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const createEvaluationLinks = async () => {
     if (!selectedPo) return;
     if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
-      onNotify("Upload the official PO to the approved private school Drive before generating evaluator links.");
+      onNotify("Upload the official PO document before generating evaluation links.");
       return;
     }
     if (!selectedPo.poNumber.trim()) {
@@ -1257,9 +1257,9 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   };
 
   const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel") => {
-    if (!selectedPo?.documentUrl) throw new Error("Store the official PO in private school Drive before sending.");
+    if (!selectedPo?.documentUrl) throw new Error("Save the official PO document before sending.");
     if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
-      throw new Error("This PO is a legacy document. Archive it in the approved school Google Drive before sending a new evaluator request.");
+      throw new Error("This PO needs an approved official document before sending a new evaluation request.");
     }
     if(!schoolEmailEnabled)throw new Error("Evaluator emails are disabled in Preview until the school email integration is approved and verified.");
     const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
@@ -1333,7 +1333,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const sendEmail = async () => {
     if (!selectedPo) return;
     if (!selectedPo.documentUrl) {
-      onNotify("Store the official PO first. The approved school Drive file or existing official PO will be attached automatically.");
+      onNotify("Save the official PO first. The document will be attached automatically.");
       return;
     }
     setSending(true);
@@ -1362,25 +1362,27 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     <div>
       <div className="page-heading">
         <div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE & EVALUATION</div><h1>PO Storage & Evaluation</h1><p>Find the PO, store the official document, verify its pricing, and send role-specific evaluation requests from one place.</p></div>
-        <div className="po-generator-actions"><button className="btn secondary" onClick={() => void checkSchoolDrive()} disabled={schoolDriveChecking}><ShieldCheck size={15}/>{schoolDriveChecking?"Checking Drive…":"Check School Drive"}</button><a className="btn secondary" href="/email-directory"><Mail size={15}/> Email Directory</a><button className="btn secondary" onClick={() => void sync()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> {loading ? "Syncing…" : "Sync Google Sheet"}</button></div>
+        <div className="po-generator-actions"><button className="btn secondary" onClick={() => void checkSchoolDrive()} disabled={schoolDriveChecking}><ShieldCheck size={15}/>{schoolDriveChecking?"Checking access…":"Check document access"}</button><a className="btn secondary" href="/email-directory"><Mail size={15}/> Email Directory</a><button className="btn secondary" onClick={() => void sync()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> {loading ? "Syncing…" : "Sync records"}</button></div>
       </div>
 
       <div className="panel" style={{padding:"12px 16px",marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:13}}>
           <ShieldCheck size={17} color={schoolDriveEnabled?"#0f766e":"#b45309"}/>
-          <strong>Official PO Storage: Google Drive only</strong>
+          <strong>Official PO Documents</strong>
           <span style={{color:schoolDriveEnabled?"#047857":"#b45309"}}>
-            {schoolDriveEnabled?"School Drive enabled":"Awaiting school-owned Drive authorization"}
+            {schoolDriveEnabled?"Document access ready":"Document access unavailable"}
           </span>
         </div>
         <p style={{fontSize:12,opacity:.8,margin:"6px 0 0"}}>
-          {schoolDriveMessage || "New PO files will never be uploaded to Cloudinary. School-admin verification is required before storing confidential documents."}
+          {schoolDriveEnabled
+            ? "PO documents are available to authorized Purchasing staff."
+            : "Document uploads require administrator access. Use Check document access to verify availability."}
         </p>
         {!schoolEmailEnabled && <p style={{color:"#92400e",fontSize:12,marginTop:5}}>
           Evaluator email delivery is paused in this Preview. Links and forms can be reviewed without sending real school emails.
         </p>}
       </div>
-      <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Google Sheet needs attention" : fetchedAt ? "Google Sheet connected" : "Connecting to Google Sheet…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading PO and PRF details from the configured spreadsheet")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
+      <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Record sync needs attention" : fetchedAt ? "Records up to date" : "Loading records…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading purchase order and request details")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
 
       <div className="po-evaluation-tabs"><button className={queueOnly ? "active" : ""} onClick={() => setQueueOnly(true)}>For Supplier Evaluation <span>{poRecords.filter((g) => !submittedByPo.has(normalizeKey(g.poNumber))).length + prfOnlyRecords.filter((item) => !submittedByPrf.has(normalizeKey(item.prfNumber))).length}</span></button><button className={!queueOnly ? "active" : ""} onClick={() => setQueueOnly(false)}>All PO Records <span>{poRecords.length + prfOnlyRecords.length}</span></button></div>
 
@@ -1426,10 +1428,10 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       {previewOpen && selectedPo && <div className="modal-backdrop"><div className="po-generator-modal"><div className="po-generator-modal-head"><div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE {selectedPo.documentUrl ? "· OFFICIAL DOCUMENT STORED" : "· WAITING FOR OFFICIAL DOCUMENT"}</div><h2>{selectedPo.poNumber}</h2><p>{selectedPo.vendorName || "Supplier"} · PRF {selectedPo.prfNumber || "—"}</p>{selectedPo.poNumber && <a href={`/print-evaluation/${encodeURIComponent(selectedPo.poNumber)}`} target="_blank" rel="noreferrer" className="btn secondary btn-sm" style={{ display: "inline-flex", marginTop: 8 }}>Print ISO Supplier Evaluation</a>}</div><button className="icon-button" onClick={() => setPreviewOpen(false)}><X size={18}/></button></div><div className="po-generator-modal-body"><div className="po-preview-card">
         {selectedPo.documentUrl ? selectedPo.documentProvider==="google-drive" ?
           <div className="stored-po-viewer">
-            <div className="stored-po-toolbar"><div><b>Official PO stored in private Southville Drive</b>
-              <span>{selectedPo.documentName||"Private PO document"}</span></div></div>
+            <div className="stored-po-toolbar"><div><b>Official PO document available</b>
+              <span>{selectedPo.documentName||"Official PO document"}</span></div></div>
             <p style={{fontSize:12,color:"#475569",margin:"10px 0"}}>
-              Access requires a verified Purchasing administrator. School Drive files are never made public.
+              This document is available only to authorized users.
             </p>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,margin:"12px 0"}}>
               {(selectedPo.documentPages?.length
@@ -1457,7 +1459,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
                       <strong style={{fontSize:15,color:"#0f172a",display:"block",overflowWrap:"anywhere"}}>
                         {privatePoTitle}
                       </strong>
-                      <span style={{fontSize:12,color:"#475569"}}>Private school Google Drive · authorized preview</span>
+                      <span style={{fontSize:12,color:"#475569"}}>Official PO document · authorized preview</span>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       {privatePoPreview&&
@@ -1476,7 +1478,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
                     {privatePoLoading?
                       <div role="status" style={{textAlign:"center",padding:24,color:"#334155"}}>
                         <RefreshCw size={24} className="spin"/>
-                        <p>Retrieving the official PO securely from school Drive…</p>
+                        <p>Opening the official PO document…</p>
                       </div>:
                       privatePoError?
                         <div role="alert" style={{maxWidth:500,padding:18,
@@ -1500,7 +1502,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
               onClick={()=>fileInputRef.current?.click()}>Replace / add PO pages</button>
           </div>
           : <div className="stored-po-viewer"><div className="stored-po-toolbar"><div><b>Legacy official PO document (view only)</b><span>{selectedPo.documentName || "Stored PO document"}</span></div><a className="btn secondary btn-sm" href={selectedPo.documentUrl} target="_blank" rel="noreferrer">Open document</a></div>{(selectedPo.documentPages || [{ url: selectedPo.documentUrl, name: selectedPo.documentName || "Official PO", mimeType: selectedPo.documentMimeType }]).map((doc, index) => <div className="stored-po-page" key={`${doc.url}-${index}`}><div className="stored-po-page-label">{doc.mimeType === "application/pdf" && doc.pages && doc.pages > 1 ? `${doc.pages}-PAGE PDF` : `PAGE ${index + 1}${selectedPo.documentPages?.length ? ` OF ${selectedPo.documentPages.length}` : ""}`}</div>{doc.mimeType?.startsWith("image/") ? <img src={doc.url} alt={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-image"/> : <iframe title={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-frame" src={doc.url}/>} </div>)}<button className="btn ghost btn-sm replace-po-btn" disabled={!canEdit || uploading || !schoolDriveEnabled} onClick={() => fileInputRef.current?.click()}>{uploading ? `Uploading… ${uploadProgress}%` : "Replace / add PO pages"}</button></div> : <div className="po-empty-document"><div className="po-empty-document-icon"><UploadCloud size={22}/></div><b>No official PO stored yet</b><span>Upload the actual PDF or select multiple page images. The stored document—not a generated template—will be used for the requisitioner email.</span></div>}<input ref={fileInputRef} hidden type="file" accept="application/pdf,image/*" multiple onChange={(e) => e.target.files?.length && void uploadOfficialPo(Array.from(e.target.files))}/></div>
-        <aside className="po-send-panel"><div className="section-kicker po-section-kicker">TRANSACTION IDENTIFIER</div><h3 className="po-section-title">PO / PRF details</h3><div className="field"><span>PO Number {selectedPo.poNumber ? "" : "· enter manually when available"}</span><input value={selectedPo.poNumber} onChange={(e) => setSelectedPo({ ...selectedPo, poNumber: e.target.value })} placeholder="Type PO number if the PRF has no PO group yet"/></div>{!selectedPo.poNumber && <div className="po-warning-note"><Search size={14}/><span>This PRF came directly from the V2 monitoring sheet and has no PO group yet. Enter the PO number here when available; the PRF details are already loaded.</span></div>}<div className="section-kicker po-section-kicker workflow-kicker">EVALUATION WORKFLOW</div><h3 className="po-workflow-title">1. Store official PO</h3><p className="po-workflow-description">New uploads are stored only in the school-owned private Google Drive. Select PDF files or multiple image pages, up to 8 MiB per file. Previously stored documents remain view-only until migrated.</p><button className="upload-drop-btn" disabled={!canEdit || uploading || !schoolDriveEnabled} onClick={() => fileInputRef.current?.click()}><UploadCloud size={18}/><span>{selectedPo.documentUrl ? "Replace stored PO" : "Upload / Scan PO"}</span><small>PDF, JPG, PNG · 8 MiB per file to school Drive · multi-page supported</small></button>{selectedPo.documentUrl && <div className="stored-doc-callout"><CheckCircle2 size={16}/><div><b>PO document stored in {selectedPo.documentProvider==="google-drive"?"private school Drive":"Cloudinary"}</b><span>{selectedPo.documentName || "Official PO"}</span><small>{selectedPo.documentUploadedAt ? `Uploaded ${new Date(selectedPo.documentUploadedAt).toLocaleString()}` : ""}{selectedPo.documentPages?.length ? ` · ${selectedPo.documentPages.length} stored file${selectedPo.documentPages.length > 1 ? "s" : ""}` : ""}</small></div></div>}{uploading && <div className="po-upload-progress"><div><span>Uploading official PO to {neonEnabled()?"private school Drive":"Cloudinary"}</span><b>{uploadProgress}%</b></div><i style={{ width: `${uploadProgress}%` }}/></div>}
+        <aside className="po-send-panel"><div className="section-kicker po-section-kicker">TRANSACTION IDENTIFIER</div><h3 className="po-section-title">PO / PRF details</h3><div className="field"><span>PO Number {selectedPo.poNumber ? "" : "· enter manually when available"}</span><input value={selectedPo.poNumber} onChange={(e) => setSelectedPo({ ...selectedPo, poNumber: e.target.value })} placeholder="Type PO number if the PRF has no PO group yet"/></div>{!selectedPo.poNumber && <div className="po-warning-note"><Search size={14}/><span>This PRF came directly from the V2 monitoring sheet and has no PO group yet. Enter the PO number here when available; the PRF details are already loaded.</span></div>}<div className="section-kicker po-section-kicker workflow-kicker">EVALUATION WORKFLOW</div><h3 className="po-workflow-title">1. Store official PO</h3><p className="po-workflow-description">Upload the official purchase order as a PDF or page images (up to 8 MiB per file). The document will remain available for authorized evaluation review.</p><button className="upload-drop-btn" disabled={!canEdit || uploading || !schoolDriveEnabled} onClick={() => fileInputRef.current?.click()}><UploadCloud size={18}/><span>{selectedPo.documentUrl ? "Replace stored PO" : "Upload / Scan PO"}</span><small>PDF, JPG, PNG · up to 8 MiB per file · multiple pages supported</small></button>{selectedPo.documentUrl && <div className="stored-doc-callout"><CheckCircle2 size={16}/><div><b>Official PO document saved</b><span>{selectedPo.documentName || "Official PO"}</span><small>{selectedPo.documentUploadedAt ? `Uploaded ${new Date(selectedPo.documentUploadedAt).toLocaleString()}` : ""}{selectedPo.documentPages?.length ? ` · ${selectedPo.documentPages.length} stored file${selectedPo.documentPages.length > 1 ? "s" : ""}` : ""}</small></div></div>}{uploading && <div className="po-upload-progress"><div><span>Uploading official PO document</span><b>{uploadProgress}%</b></div><i style={{ width: `${uploadProgress}%` }}/></div>}
           <div className="po-delivery-summary"><div><span>Expected delivery</span><b>{selectedPo.expectedDate || "—"}</b></div><div><span>Actual delivery</span><b>{selectedPo.actualDeliveryDate || "—"}</b></div><div><span>Delivery lead time</span><b>{calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) !== null ? `${calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate)} days` : "—"}</b></div><div><span>Status</span><b>{selectedPo.status || "Pending"}</b></div><div><span>Received by</span><b>{selectedPo.receivedBy || "—"}</b></div></div>
           <h3 className="po-workflow-title workflow-second">2. PO details &amp; pricing</h3>
           <div className="po-pricing-table-wrap">
@@ -1552,7 +1554,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         <span className={completed ? "badge badge-done" : "badge badge-pending"}>{status}{!completed && (latest?.reminderCount || 0) > 0 ? " · " + latest?.reminderCount + " reminders" : ""}</span>
       </div>;
     })}
-</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled || (neonEnabled() && selectedPo.documentProvider!=="google-drive")} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All roles use the same official private school Google Drive PO attachment, while results are saved separately by evaluator role.</span></div></aside></div></div></div>}
+</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled || (neonEnabled() && selectedPo.documentProvider!=="google-drive")} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All evaluators can view the same official PO document, while each role submits its own evaluation.</span></div></aside></div></div></div>}
     </div>
   );
 }
