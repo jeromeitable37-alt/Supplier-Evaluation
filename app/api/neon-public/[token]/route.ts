@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { appPool, AppAccessError, errorResponse, object, s } from "../../../../lib/server/neonAppAuth";
+import { neonSchoolDeliveryEnabled, syncNeonEvaluationToSheet } from "../../../../lib/server/neonSheetSync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,7 +146,20 @@ export async function POST(request:Request,ctx:Context){
         "UPDATE se_evaluation_links SET link_status='submitted',payload=$2::jsonb,imported_at=now() WHERE token=$1",
         [token,JSON.stringify(updatedLink)]);
       await client.query("COMMIT");
-      return NextResponse.json({ok:true,evaluationId:id,submittedAt},{headers:{"Cache-Control":"no-store"}});
+      // Attempt official Sheet upsert immediately on the trusted server after
+      // commit. With the Preview safety switch OFF, queue only and never call
+      // the school endpoint. A webhook outage never invalidates the response.
+      let sheetSync:"queued"|"synced"|"already_synced"|"processing"="queued";
+      if(neonSchoolDeliveryEnabled()){
+        try {
+          const synced=await syncNeonEvaluationToSheet(token);
+          sheetSync=synced.state;
+        }catch{
+          sheetSync="queued";
+        }
+      }
+      return NextResponse.json({ok:true,evaluationId:id,submittedAt,sheetSync},
+        {headers:{"Cache-Control":"no-store"}});
     }catch(error){
       await client.query("ROLLBACK");
       throw error;
