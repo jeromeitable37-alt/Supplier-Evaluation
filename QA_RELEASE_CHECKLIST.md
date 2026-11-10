@@ -72,6 +72,33 @@ Vercel itself authenticates the request.
 passing Vercel Authentication needs investigation. This is *not*
 a substitute for authenticated functional QA.
 
+## Automated rollback-only database CRUD QA — ready for manual execution
+
+The admin-only **Run rollback-only QA** control is embedded at
+`/neon-pilot`. It sends an authenticated POST to `/api/neon-qa` using
+the user's Firebase ID token. It requires a matching active Neon
+administrator and works **only** on the branch-pinned Preview database.
+
+The test runs parameterized SQL checks for:
+- Creating, reading, updating and deleting a fictional evaluation;
+- Rejecting duplicate evaluation IDs;
+- Creating and updating a fictional PO;
+- Creating a fictional evaluation link, claiming it once, preventing a
+  second claim and preventing a second public evaluation ID;
+- Verifying transient changes are confined to one transaction;
+- Explicit PostgreSQL `ROLLBACK` and proof the generated QA IDs no longer
+  exist; unchanged 1,430 original migration snapshots.
+
+**There is no COMMIT and no external email/Sheet call.** Generated QA
+record IDs never contain personal data. The UI returns PASS/FAIL for
+database-layer checks. It is a PostgreSQL transactional smoke test, **not**
+a real end-to-end test of React forms, Google Sheets or staff role
+authorization. Do not claim this check passed until the authorized admin
+actually presses the button and reports the result.
+
+If the test fails or times out, do not enable external writes or proceed
+to Production; inspect the failed stage and Vercel Preview function logs.
+
 ## B. Controlled functional tests — Preview only
 
 Use fictional QA-only supplier/PO numbers (for example,
