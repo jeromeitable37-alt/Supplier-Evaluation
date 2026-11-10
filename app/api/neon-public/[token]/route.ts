@@ -20,9 +20,14 @@ export async function GET(_request: Request,ctx: Context) {
   try {
     const token=await linkToken(ctx);
     const db=appPool();
-    const result=await db.query("SELECT payload FROM se_evaluation_links WHERE token=$1",[token]);
-    const link=result.rows[0]?.payload;
+    const result=await db.query("SELECT link_status,payload FROM se_evaluation_links WHERE token=$1",[token]);
+    const row=result.rows[0];
+    const link=row?.payload;
     if (!link) throw new AppAccessError("Evaluation link is invalid or unavailable.",404);
+    if(row.link_status==="revoked"||row.link_status==="expired"){
+      return NextResponse.json({ok:false,message:"This evaluation link has been replaced or expired. Request a new link from the Purchasing Office."},
+        {status:410,headers:{"Cache-Control":"no-store"}});
+    }
     const expiry=typeof link.expiresAt==="string"?Date.parse(link.expiresAt):NaN;
     if(Number.isFinite(expiry)&&expiry<=Date.now()){
       return NextResponse.json({ok:false,message:"This evaluation link has expired. Please contact the Purchasing Office."},
@@ -61,6 +66,9 @@ export async function POST(request:Request,ctx:Context){
         "SELECT link_status,payload FROM se_evaluation_links WHERE token=$1 FOR UPDATE",[token]);
       const stored=found.rows[0];
       if(!stored)throw new AppAccessError("Evaluation link not found.",404);
+      if(stored.link_status==="revoked"||stored.link_status==="expired"){
+        throw new AppAccessError("This evaluation link was replaced or expired. Contact the Purchasing Office.",410);
+      }
       if(stored.link_status!=="pending") throw new AppAccessError("This evaluation was already submitted.",409);
       const link=stored.payload as Record<string,unknown>;
       const expiry=s(link.expiresAt)?Date.parse(s(link.expiresAt)):NaN;
