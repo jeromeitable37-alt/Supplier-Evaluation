@@ -199,7 +199,7 @@ function roleName(role: string) {
 
 async function sendViaAppsScript(input: {
   to: string; subject: string; text: string; html: string;
-  attachments: { url: string; name: string; mimeType?: string }[];
+  attachments: { url?: string; fileId?: string; name: string; mimeType?: string }[];
 }) {
   const url = process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL;
   const secret = process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET;
@@ -236,14 +236,17 @@ async function sendPendingLinkEmail(
   if (!poNumber) throw new Error("Missing Purchase Order number.");
   const rawDocuments = Array.isArray(po.documentPages) && po.documentPages.length
     ? po.documentPages
-    : [{ url: po.documentUrl, name: po.documentName || poNumber + ".pdf", mimeType: po.documentMimeType }];
-  const attachments: { url: string; name: string; mimeType?: string }[] = rawDocuments
+    : [{ url: po.documentUrl, fileId:(po as any).documentFileId,
+        name: po.documentName || poNumber + ".pdf", mimeType: po.documentMimeType }];
+  const attachments: { url?: string; fileId?: string; name: string; mimeType?: string }[] = rawDocuments
     .filter((item: any) => {
+      if (typeof item?.fileId === "string" &&
+        /^[A-Za-z0-9_-]{15,150}$/.test(item.fileId)) return true;
       try { return new URL(String(item?.url || "")).protocol === "https:"; }
       catch { return false; }
     })
     .map((item: any, index: number) => ({
-      url: String(item.url),
+      ...(item?.fileId ? {fileId:String(item.fileId)} : {url:String(item.url)}),
       name: officialPoAttachmentName({
         poNumber, index, originalName: item.name,
         mimeType: item.mimeType, url: item.url,
@@ -300,6 +303,7 @@ async function runNeonReminders(request: Request) {
     !completed.has(roleKey(x.link)) &&
     !emailedToday.has(roleKey(x.link)) &&
     x.link.remindersEnabled!==false &&
+    (!x.link.expiresAt || Date.parse(String(x.link.expiresAt))>Date.now()) &&
     isEmail(x.link.evaluatorEmail) &&
     Boolean(x.link.po?.poNumber) &&
     Boolean(x.link.po?.documentUrl||x.link.po?.documentPages?.length))
