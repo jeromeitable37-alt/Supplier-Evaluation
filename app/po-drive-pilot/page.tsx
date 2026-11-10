@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { auth, signInWithEmail, signInWithGoogle } from "../../lib/firebase";
+import { readPrivatePoChunks } from "../../lib/privatePoReader";
 
 type Uploaded = { fileId: string; name: string; mimeType: string; size: number };
 const MAX_SIZE = 8 * 1024 * 1024;
@@ -139,17 +140,33 @@ export default function PoDrivePilot() {
     setBusy(true);
     try {
       const token = await user.getIdToken();
-      const form = new FormData();
-      form.set("file", file);
-      form.set("poNumber", poNumber.trim());
-      form.set("prfNumber", prfNumber.trim());
-      const response = await fetch("/api/po-drive", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + token },
-        body: form,
+      const CHUNK_SIZE=1024*1024;
+      const uploadId=crypto.randomUUID();
+      const chunkCount=Math.ceil(file.size/CHUNK_SIZE);
+      const details={
+        poNumber:poNumber.trim(),prfNumber:prfNumber.trim(),
+        name:file.name,mimeType:file.type,uploadId,
+        totalBytes:file.size,chunkCount,
+      };
+      for(let index=0;index<chunkCount;index++){
+        const form=new FormData();
+        for(const [key,value] of Object.entries(details))form.set(key,String(value));
+        form.set("chunkIndex",String(index));
+        form.set("file",file.slice(index*CHUNK_SIZE,(index+1)*CHUNK_SIZE),file.name);
+        const chunkResponse=await fetch("/api/po-drive",{
+          method:"POST",headers:{Authorization:"Bearer "+token},body:form,
+        });
+        const savedChunk=await chunkResponse.json();
+        if(!chunkResponse.ok||!savedChunk.ok)throw new Error(
+          savedChunk.message||"Could not transfer a private PO chunk.");
+      }
+      const response=await fetch("/api/po-drive",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},
+        body:JSON.stringify({action:"finish",...details}),
       });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.message || "Upload failed.");
+      const data=await response.json();
+      if(!response.ok||!data.ok)throw new Error(data.message||"School Drive finalization failed.");
       setResult({
         fileId: String(data.fileId),
         name: String(data.name),
@@ -168,17 +185,11 @@ export default function PoDrivePilot() {
     setBusy(true);
     setError("");
     try {
-      const token = await user.getIdToken();
-      const response = await fetch(
-        "/api/po-drive-file?fileId=" + encodeURIComponent(result.fileId),
-        { headers: { Authorization: "Bearer " + token }, cache: "no-store" },
-      );
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || "Could not open private PO preview.");
-      }
-      const blob = await response.blob();
-      setPreviewUrl(URL.createObjectURL(blob));
+      const token=await user.getIdToken();
+      const document=await readPrivatePoChunks(index=>
+        "/api/po-drive-file?fileId="+encodeURIComponent(result.fileId)+
+        "&chunkIndex="+index,token);
+      setPreviewUrl(URL.createObjectURL(document.blob));
       setShowPreview(true);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Preview failed.");
@@ -210,7 +221,7 @@ export default function PoDrivePilot() {
         </div>
         <h1 style={{ fontSize: 24, marginBottom: 10 }}>Private Google Drive PO Upload Test</h1>
         <p style={{ lineHeight: 1.6, color: "#475569" }}>
-          This separate test page verifies a secure upload to the school Drive and a private staff-only preview.
+          This separate test page verifies chunked upload to the private school Google Drive and a staff-only document preview.
           It does not replace the live PO Storage workflow, attach files to evaluations, or delete Cloudinary files.
           Use a non-confidential sample document until the integration is approved.
         </p>
