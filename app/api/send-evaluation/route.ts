@@ -106,7 +106,7 @@ async function sendViaAppsScript(input: {
   subject: string;
   html: string;
   text: string;
-  attachments: Array<{ url: string; name: string; mimeType?: string }>;
+  attachments: Array<{ url?: string; fileId?: string; name: string; mimeType?: string }>;
 }) {
   const url = String(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL || "").trim();
   const secret = String(process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET || "").trim();
@@ -302,9 +302,12 @@ export async function POST(request: Request) {
     if (claimedToken) {
       const now=new Date().toISOString();
       await appPool().query(
-        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() WHERE token=$1",
+        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb || "+
+        "CASE WHEN COALESCE(payload->>'emailSentAt','')='' "+
+        "THEN jsonb_build_object('emailSentAt',$3::text) ELSE '{}'::jsonb END,"+
+        "imported_at=now() WHERE token=$1",
         [claimedToken,JSON.stringify({emailSendStatus:"sent",
-          lastEmailSentAt:now,lastEmailRecipient:resolvedTo})],
+          lastEmailSentAt:now,lastEmailRecipient:resolvedTo}),now],
       );
     }
     return NextResponse.json({
