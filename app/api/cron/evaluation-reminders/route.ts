@@ -1,6 +1,7 @@
 import { createSign } from "node:crypto";
 import { NextResponse } from "next/server";
 import { appPool } from "../../../../lib/server/neonAppAuth";
+import { retryPendingNeonSheetSync } from "../../../../lib/server/neonSheetSync";
 import { officialPoAttachmentName } from "../../../../lib/poAttachmentName";
 
 export const runtime = "nodejs";
@@ -361,8 +362,15 @@ async function runNeonReminders(request: Request) {
       }
     }finally{client.release();}
   }
+  // One existing authorized school cron also retries queued Sheet writes.
+  // No new public cron or extra school-script execution when the Preview
+  // external-delivery flag is OFF (guarded at the route's entry point).
+  let sheetSync:Awaited<ReturnType<typeof retryPendingNeonSheetSync>>|null=null;
+  try {sheetSync=await retryPendingNeonSheetSync(20);}
+  catch{failures.push("Queued Sheet sync retry was unavailable.");}
   return NextResponse.json({ok:true,backend:"neon",runDay:day,...stats,
-    deferred:Math.max(0,unique.length-queue.length),errors:failures.slice(0,12)});
+    sheetSync,deferred:Math.max(0,unique.length-queue.length),
+    errors:failures.slice(0,12)});
 }
 
 export async function GET(request: Request) {
