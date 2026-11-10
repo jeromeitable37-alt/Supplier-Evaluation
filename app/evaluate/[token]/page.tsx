@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
 import { neonEnabled } from "../../../lib/neonClient";
+import PrivatePoAttachment from "../../../components/PrivatePoAttachment";
 
 const labels = ["Poor", "Below Average", "Average", "Good", "Excellent"];
 type EvaluationCriterion = readonly [string, string, string];
@@ -204,8 +205,21 @@ export default function EvaluationPage() {
     <section className="public-po-paper">
       <div className="public-po-paper-head"><b>{officialDocument ? "Official Purchase Order" : "Generated Purchase Order"}</b><span>{officialDocument ? "Stored transaction document" : "System template preview"}</span></div>
       {officialDocument ? <>
-        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The official PO stored by the Purchasing Office is shown here. Multiple PDF pages or uploaded page images are supported.</small></div><a href={officialDocument} target="_blank" rel="noreferrer">Open</a></div>
-        {displayedPages.filter(doc=>doc.url).map((doc, index) => <div className="public-official-page" key={`${doc.url}-${index}`}><div className="public-official-page-label">PAGE {index + 1}{po.documentPages?.length ? ` OF ${po.documentPages.length}` : ""}</div>{isImage(doc.mimeType) ? <img src={doc.url} alt={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-official-image"/> : <iframe title={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-po-frame" src={doc.url}/>}</div>)}
+        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The official PO stored by the Purchasing Office is shown here. Multiple PDF pages or uploaded page images are supported.</small></div>{isPrivateDrivePo?<small>Protected school Drive · view below</small>:<a href={officialDocument} target="_blank" rel="noreferrer">Open</a>}</div>
+        {isPrivateDrivePo?
+          displayedPages.filter(doc=>doc.fileId).map((doc,index)=>
+            <PrivatePoAttachment key={doc.fileId||index} token={token}
+              fileId={doc.fileId||""} name={doc.name||`PO-${po.poNumber}`}
+              mimeType={doc.mimeType} index={index} total={displayedPages.length}/>):
+          displayedPages.filter(doc=>doc.url).map((doc,index)=>
+            <div className="public-official-page" key={`${doc.url}-${index}`}>
+              <div className="public-official-page-label">PAGE {index+1}{po.documentPages?.length?` OF ${po.documentPages.length}`:""}</div>
+              {isImage(doc.mimeType)?
+                <img src={doc.url} alt={`Official purchase order ${po.poNumber} page ${index+1}`}
+                  className="public-official-image"/>:
+                <iframe title={`Official purchase order ${po.poNumber} page ${index+1}`}
+                  className="public-po-frame" src={doc.url}/>}
+            </div>)}
       </> : <div className="public-generated-warning"><b>Official PO not attached yet</b><span>The purchasing office must store the official PO before this evaluation link is sent.</span></div>}
       <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: {displayTotal > 0 ? `Php ${displayTotal.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</b></div>
     </section>
