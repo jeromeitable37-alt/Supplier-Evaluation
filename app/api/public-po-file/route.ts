@@ -43,7 +43,7 @@ export async function GET(request:Request) {
         {status:404,headers});
     }
     const expiry=saved.payload.expiresAt?Date.parse(saved.payload.expiresAt):NaN;
-    if(saved.link_status==="pending"&&Number.isFinite(expiry)&&expiry<=Date.now()){
+    if(Number.isFinite(expiry)&&expiry<=Date.now()){
       return NextResponse.json({ok:false,message:"Evaluation link has expired."},
         {status:410,headers});
     }
