@@ -6,6 +6,7 @@ import { firebaseConfigured, signInWithGoogle, subscribeAuth } from "../../lib/f
 import type { User } from "firebase/auth";
 import NeonEvaluationExplorer from "../../components/NeonEvaluationExplorer";
 import NeonPurchasingPreview from "../../components/NeonPurchasingPreview";
+import NeonRollbackQa from "../../components/NeonRollbackQa";
 
 type PilotData = {
   ok: true;
@@ -132,7 +133,7 @@ export default function NeonPilotPage() {
           </div>
         </div>
         <p style={{ color: "#a6bac5", maxWidth: 750, lineHeight: 1.6, marginBottom: 24 }}>
-          Secure, read-only verification of the migrated Firestore snapshot on the isolated
+          Secure verification of the migrated Firestore snapshot on the isolated
           <strong style={{ color: "#c4efdf" }}> migration-preview </strong> Neon branch.
           The live Supplier Evaluation website still uses Firestore.
         </p>
@@ -194,13 +195,14 @@ export default function NeonPilotPage() {
                 ))}
               </div>
             </section>
+            {auditOk && user && <NeonRollbackQa user={user} />}
             {auditOk && user && <NeonEvaluationExplorer user={user} />}
             {auditOk && user && <NeonPurchasingPreview user={user} />}
           </>
         )}
         <div style={{ display: "flex", gap: 10, color: "#b8d4d0", alignItems: "center", lineHeight: 1.55, fontSize: 13 }}>
           <ShieldCheck size={19} style={{ flexShrink: 0 }} />
-          No PostgreSQL passwords are sent to this page. This pilot never changes records in either database.
+          No PostgreSQL passwords are sent to this page. All write-QA records use a transaction rollback; no permanent database changes or external sends.
         </div>
       </div>
     </main>
