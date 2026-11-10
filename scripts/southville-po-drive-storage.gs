@@ -298,3 +298,33 @@ function siscDriveWebhookHealth_(){
     folderPrivate:result.folderPrivacy==='no-anyone-link',
     chunkUploadAvailable:true,chunkPreviewAvailable:true};
 }
+
+/**
+ * Optional school-owned daily cleanup of orphaned temporary upload chunks.
+ * Never touches finalized official POs or any other folder's files.
+ * Schedule from the school Apps Script editor only after owner approval.
+ */
+function siscDriveCleanupStaging_(){
+  var parent=siscDriveFolder_();
+  var folders=parent.getFoldersByName(SISC_PO_STAGE_FOLDER_);
+  if(!folders.hasNext())return {ok:true,scanned:0,deleted:0};
+  var stage=folders.next();
+  var files=stage.getFiles();
+  var olderThan=Date.now()-24*60*60*1000;
+  var scanned=0,deleted=0;
+  var lock=LockService.getScriptLock();
+  if(!lock.tryLock(20000))throw new Error('PO archive is busy; retry cleanup.');
+  try{
+    while(files.hasNext()&&scanned<250){
+      var file=files.next();
+      scanned++;
+      var name=file.getName();
+      if(/^se-upload-[a-f0-9-]{36}-part-[0-7]$/.test(name)&&
+        file.getDateCreated().getTime()<olderThan){
+        file.setTrashed(true);
+        deleted++;
+      }
+    }
+  }finally{lock.releaseLock();}
+  return {ok:true,scanned:scanned,deleted:deleted};
+}
