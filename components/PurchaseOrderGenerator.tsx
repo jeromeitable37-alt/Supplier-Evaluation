@@ -1257,12 +1257,17 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     }
   };
 
-  const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel") => {
+  const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel", previewOnly = false) => {
+    if(previewOnly && !(neonEnabled() && role==="purchaser" &&
+      selectedPo?.poNumber.trim()==="32187" &&
+      normalizePerson(selectedPo.buyerName)==="jc campit")) {
+      throw new Error("This Preview send is restricted to JC Campit's Purchasing evaluation for PO 32187.");
+    }
     if (!selectedPo?.documentUrl) throw new Error("Save the official PO document before sending.");
     if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
       throw new Error("This PO needs an approved official document before sending a new evaluation request.");
     }
-    if(!schoolEmailEnabled)throw new Error("Evaluator emails are disabled in Preview until the school email integration is approved and verified.");
+    if(!schoolEmailEnabled && !previewOnly)throw new Error("Official evaluator email delivery is disabled in Preview.");
     const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
     if(recipientIssue)throw new Error(recipientIssue);
     if (!selectedPo.poNumber.trim()) throw new Error("Enter the PO number before sending the evaluation request.");
@@ -1272,7 +1277,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const targetName = role === "purchaser" ? selectedPo.buyerName : role === "requisitioner" ? selectedPo.requisitioner : selectedPo.receivedBy;
     if (!targetName) throw new Error(role === "purchaser" ? "Add a Purchasing / Buyer name before sending." : role === "requisitioner" ? "Add a requisitioner name before sending." : "No Received by person is set for AMD evaluation.");
     if (!targetEmail) throw new Error(role === "purchaser" ? "No Purchasing / Buyer email was found. Enter a manual email or check the Employee sheet." : role === "requisitioner" ? "No requisitioner email was found. Enter a manual email or check the Employee sheet." : "No AMD / Received by email was found. Enter a manual email or check the Employee sheet.");
-    await rememberContact(role, targetName, targetEmail, selectedPo.department);
+    if(!previewOnly)await rememberContact(role, targetName, targetEmail, selectedPo.department);
 
     let link = role === "purchaser" ? createdLinks.purchaser : role === "requisitioner" ? createdLinks.requisitioner : createdLinks.amd_personnel;
     if (!link) {
@@ -1314,6 +1319,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         poDocumentName: selectedPo.documentName || `${selectedPo.poNumber}.pdf`,
         poDocuments: (selectedPo.documentPages || [{ url: selectedPo.documentUrl, fileId:selectedPo.documentFileId, name: selectedPo.documentName || `${selectedPo.poNumber}.pdf`, mimeType: selectedPo.documentMimeType }]).map((doc) => ({ url: doc.url, fileId:doc.fileId, name: doc.name, mimeType: doc.mimeType })),
         evaluationUrl: link,
+        ...(previewOnly ? { previewPurchasingRequest: "SEND_JC_PREVIEW_EVALUATION_32187" } : {}),
         workspace: { name: workspaceName, address: workspaceAddress, email: workspaceEmail },
       }),
     });
@@ -1323,12 +1329,31 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     try {
       const token = new URL(link, window.location.origin).pathname.split("/").filter(Boolean).pop() || "";
       if (!token) throw new Error("Missing evaluation link token.");
-      await markEvaluationEmailSentCloud(token, data?.recipient || targetEmail);
+      // Neon writes the email audit atomically on successful provider receipt.
+      if(!previewOnly)await markEvaluationEmailSentCloud(token, data?.recipient || targetEmail);
     } catch (error) {
       trackingWarning = "Email accepted but could not update send tracking: " +
         (error instanceof Error ? error.message : String(error));
     }
     return { role, recipient: data?.recipient || targetEmail, attachmentCount: data?.attachmentCount || 1, link, trackingWarning };
+  };
+
+  const sendPurchasingPreviewEmail = async () => {
+    if(!selectedPo||!neonEnabled()||selectedPo.poNumber.trim()!=="32187")return;
+    if(!window.confirm(
+      "PREVIEW TEST — Send the actual Purchasing evaluation link and official PO 32187 "+
+      "to Sir JC Campit's verified email? This email is a test, but the link can be submitted once. "+
+      "No other evaluator will be emailed. Continue?"
+    ))return;
+    setSending(true);
+    try{
+      const outcome=await sendOneEvaluation("purchaser",true);
+      onNotify("Purchasing evaluation Preview email accepted for Sir JC. "+
+        outcome.attachmentCount+" official PO attachment(s) included. "+
+        "Check Sir JC's Inbox/Spam. No Requisitioner or AMD email was sent.");
+    }catch(error){
+      onNotify(error instanceof Error?error.message:"Purchasing evaluation email test failed.");
+    }finally{setSending(false);}
   };
 
   const sendOnePurchasingTest = async () => {
@@ -1401,7 +1426,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
             : "Document uploads require administrator access. Use Check document access to verify availability."}
         </p>
         {!schoolEmailEnabled && <p style={{color:"#92400e",fontSize:12,marginTop:5}}>
-          Official evaluator email delivery is paused in Preview. Authorized single-recipient test sending is available only for PO 32187.
+          Official bulk email delivery is paused in Preview. One approved Purchasing evaluation email test is available to Sir JC for PO 32187.
         </p>}
       </div>
       <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Record sync needs attention" : fetchedAt ? "Records up to date" : "Loading records…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading purchase order and request details")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
@@ -1576,7 +1601,24 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         <span className={completed ? "badge badge-done" : "badge badge-pending"}>{status}{!completed && (latest?.reminderCount || 0) > 0 ? " · " + latest?.reminderCount + " reminders" : ""}</span>
       </div>;
     })}
-</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button>{neonEnabled() && selectedPo.poNumber.trim()==="32187" && <button type="button" className="btn secondary" disabled={testEmailSending||!canEdit} onClick={()=>void sendOnePurchasingTest()}><Mail size={16}/>{testEmailSending?"Sending test…":"Send 1 TEST email to Sir JC"}</button>}<button className="btn primary" disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled || (neonEnabled() && selectedPo.documentProvider!=="google-drive")} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All evaluators can view the same official PO document, while each role submits its own evaluation.</span></div></aside></div></div></div>}
+</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button>{neonEnabled() && selectedPo.poNumber.trim()==="32187" && <button type="button" className="btn secondary" disabled={testEmailSending||!canEdit} onClick={()=>void sendOnePurchasingTest()}><Mail size={16}/>{testEmailSending?"Sending test…":"Send attachment-only TEST email"}</button>}{neonEnabled() && !schoolEmailEnabled
+  ? (selectedPo.poNumber.trim()==="32187"
+      ? <button type="button" className="btn primary"
+          disabled={sending || testEmailSending || !canEdit ||
+            !hasStoredPrivatePo(selectedPo) || hasCompletedRole(selectedPo.poNumber,"purchaser")}
+          onClick={()=>void sendPurchasingPreviewEmail()}>
+          <Send size={16}/>{sending?"Sending Purchasing test…":"Send Purchasing evaluation to Sir JC"}
+        </button>
+      : <button type="button" className="btn primary" disabled
+          title="Only Sir JC's PO 32187 is approved for the Preview email test">
+          <Send size={16}/>Email delivery paused in Preview
+        </button>)
+  : <button className="btn primary"
+      disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled ||
+        (neonEnabled() && selectedPo.documentProvider!=="google-drive")}
+      onClick={() => void sendEmail()}>
+      <Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}
+    </button>}</div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All evaluators can view the same official PO document, while each role submits its own evaluation.</span></div></aside></div></div></div>}
     </div>
   );
 }
