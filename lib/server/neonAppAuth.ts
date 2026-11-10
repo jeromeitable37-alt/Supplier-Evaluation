@@ -1,4 +1,5 @@
 import { getPreviewPool } from "./neonPreviewAccess";
+import { getProductionPool } from "./neonProductionAccess";
 import type { Pool } from "pg";
 
 type FirebaseRecord = {
@@ -20,7 +21,8 @@ export type AppSession = {
 };
 
 export function appPool(): Pool {
-  // Hard pinned to SISC's isolated, nonproduction migration-preview endpoint.
+  // Never permit Preview credentials to be used after Neon Production cutover.
+  if (process.env.VERCEL_ENV === "production") return getProductionPool();
   return getPreviewPool();
 }
 
