@@ -198,7 +198,7 @@ export async function POST(request: Request) {
       const old=await findPayload(db,"purchaseOrders",id);
       if (!old) throw new AppAccessError("Purchase order not found.",404);
       // Only attachment metadata is accepted from this operation.
-      const allowed=["documentUrl","documentPath","documentName","documentMimeType","documentSize","documentUploadedAt","documentUploadedBy","documentSource","documentProvider","documentPages"];
+      const allowed=["documentUrl","documentPath","documentName","documentMimeType","documentSize","documentUploadedAt","documentUploadedBy","documentSource","documentProvider","documentPages","documentFileId"];
       const safe=Object.fromEntries(Object.entries(patch).filter(([k])=>allowed.includes(k)));
       await upsertPO(db,{...old,...safe,id});
     } else if (action === "saveSettings" || action === "clearSettings") {
@@ -315,6 +315,58 @@ export async function POST(request: Request) {
           [token,role,poNumber,JSON.stringify(link)],
         );
         return link;
+      });
+    } else if (action==="revokePendingLink") {
+      // Revocation must be an explicit staff action. Never silently replace a
+      // previously emailed link, and preserve the old row for audit.
+      requirePermission(session,"edit_evaluations");
+      const token=requireId(body.token);
+      const expectedPo=s(body.poNumber).trim();
+      const expectedRole=s(body.role);
+      if(!expectedPo||expectedPo.length>100||
+        !["purchaser","requisitioner","amd_personnel"].includes(expectedRole)){
+        throw new AppAccessError("A valid PO and evaluator role are required.",400);
+      }
+      result=await transaction(db,async(client)=>{
+        const existing=await client.query(
+          "SELECT link_status,evaluator_role,payload FROM se_evaluation_links WHERE token=$1 FOR UPDATE",
+          [token],
+        );
+        const row=existing.rows[0] as {
+          link_status:string;evaluator_role:string;payload:Record<string,unknown>
+        }|undefined;
+        if(!row)throw new AppAccessError("Evaluation link not found.",404);
+        if(row.link_status!=="pending")throw new AppAccessError(
+          "Only pending evaluation links can be replaced.",409);
+        const po=object(row.payload.po);
+        if(row.evaluator_role!==expectedRole||
+          s(po.poNumber).trim().toLowerCase()!==expectedPo.toLowerCase()){
+          throw new AppAccessError("Link does not belong to this PO and role.",409);
+        }
+        if(s(row.payload.submittedAt)){
+          throw new AppAccessError("A submitted evaluation cannot be revoked.",409);
+        }
+        const submitted=await client.query(
+          "SELECT 1 FROM se_evaluations WHERE payload->>'publicToken'=$1 LIMIT 1",
+          [token],
+        );
+        if(submitted.rowCount){
+          throw new AppAccessError("Evaluation already submitted; cannot revoke its link.",409);
+        }
+        const previouslySent=Boolean(s(row.payload.emailSentAt)||s(row.payload.lastEmailSentAt));
+        if(previouslySent && body.confirmPreviouslySent!==true){
+          throw new AppAccessError(
+            "This link may already have been emailed. Confirm revocation explicitly.",409);
+        }
+        const revoked={...row.payload,status:"revoked",
+          revokedAt:new Date().toISOString(),
+          revokedBy:session.uid,revokedReason:"correct_evaluator_recipient"};
+        await client.query(
+          "UPDATE se_evaluation_links SET link_status='revoked',payload=$2::jsonb,imported_at=now() "+
+          "WHERE token=$1 AND link_status='pending'",
+          [token,JSON.stringify(revoked)],
+        );
+        return {revoked:true,previouslySent};
       });
     } else if (action==="updateLinkPo" || action==="markEmail") {
       if(action==="updateLinkPo") requirePermission(session,"edit_evaluations");
