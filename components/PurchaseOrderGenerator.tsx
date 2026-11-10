@@ -1019,6 +1019,52 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     findSchoolContact(selectedPo?.receivedBy || "")?.email ||
     findDirectoryContact(selectedPo?.receivedBy || "", "amd_personnel")?.email || "";
 
+  // Reject likely misdirected evaluations before saving contacts, creating
+  // reusable links, or delivering anything to an incorrect recipient.
+  const emailAssignmentProblem = () => {
+    if(!selectedPo) return "";
+    const entries=[
+      {role:"Purchasing / Buyer",name:selectedPo.buyerName,email:resolveBuyerEmail()},
+      {role:"Requisitioner",name:selectedPo.requisitioner,email:resolveReqEmail()},
+      {role:"AMD / Received by",name:selectedPo.receivedBy,email:resolveAmdEmail()},
+    ].filter(entry=>entry.name.trim() && entry.email.trim());
+    for(const entry of entries){
+      if(!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(entry.email.trim())){
+        return entry.role+" email is invalid. Verify this address before saving or sending.";
+      }
+    }
+    for(let i=0;i<entries.length;i++){
+      for(let j=i+1;j<entries.length;j++){
+        if(entries[i].email.trim().toLowerCase()===entries[j].email.trim().toLowerCase() &&
+          normalizePerson(entries[i].name)!==normalizePerson(entries[j].name)){
+          return entries[i].role+" and "+entries[j].role+
+            " are different people but share one email. Verify each recipient before continuing.";
+        }
+      }
+    }
+    return "";
+  };
+
+  const pendingLinkProblem = () => {
+    if(!selectedPo?.poNumber) return "";
+    const targets=[
+      {role:"purchaser" as const,name:selectedPo.buyerName,email:resolveBuyerEmail()},
+      {role:"requisitioner" as const,name:selectedPo.requisitioner,email:resolveReqEmail()},
+      {role:"amd_personnel" as const,name:selectedPo.receivedBy,email:resolveAmdEmail()},
+    ];
+    for(const entry of targets){
+      if(!entry.name.trim() || !entry.email.trim())continue;
+      const pending=getPendingLink(selectedPo.poNumber,entry.role);
+      if(pending&&(
+        normalizePerson(pending.evaluatorName)!==normalizePerson(entry.name) ||
+        String(pending.evaluatorEmail||"").trim().toLowerCase()!==entry.email.trim().toLowerCase())){
+        return "An existing "+(entry.role==="purchaser"?"Buyer":entry.role==="requisitioner"?"Requisitioner":"AMD")+
+          " evaluation link has another recipient. Revoke the outdated link before making a new one.";
+      }
+    }
+    return "";
+  };
+
   const rememberContact = async (role: EvaluationContactRole, name: string, email: string, department?: string) => {
     const cleanName = String(name || "").trim();
     const cleanEmail = String(email || "").trim().toLowerCase();
@@ -1042,6 +1088,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       onNotify("Enter the PO number before saving the PO record.");
       return;
     }
+    const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
+    if(recipientIssue){onNotify(recipientIssue);return;}
     const reqEmail = resolveReqEmail();
     const next = {
       ...selectedPo,
@@ -1072,6 +1120,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       onNotify("Enter the PO number first. This PRF has no PO group yet, so the PO number must be typed manually before evaluation links are created.");
       return;
     }
+    const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
+    if(recipientIssue){onNotify(recipientIssue);return;}
     const buyerAuto = resolveBuyerEmail();
     const reqEmail = resolveReqEmail();
     const amdAuto = resolveAmdEmail();
@@ -1154,6 +1204,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       throw new Error("This PO is a legacy document. Archive it in the approved school Google Drive before sending a new evaluator request.");
     }
     if(!schoolEmailEnabled)throw new Error("Evaluator emails are disabled in Preview until the school email integration is approved and verified.");
+    const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
+    if(recipientIssue)throw new Error(recipientIssue);
     if (!selectedPo.poNumber.trim()) throw new Error("Enter the PO number before sending the evaluation request.");
     if (hasCompletedRole(selectedPo.poNumber, role)) throw new Error("This evaluator already submitted for this Purchase Order.");
     const reqEmail = resolveReqEmail();
@@ -1412,7 +1464,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
             <label className="field"><span>Total amount</span><input inputMode="decimal" value={String(selectedPo.total || "")} onChange={(e) => setSelectedPo({ ...selectedPo, total: amount(e.target.value) })} /></label>
           </div>
           <div className="po-pricing-source" style={{ display: "flex", alignItems: "center", gap: 8, margin: "-2px 0 8px", fontSize: 10.5, color: "#64748b" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0f766e", display: "inline-block" }} />{selectedPo.pricingSource === "uploaded-po" ? "Pricing source: uploaded official PO" : selectedPo.pricingSource === "mixed" ? "Pricing source: supplier spreadsheet + uploaded PO" : selectedPo.pricingSource === "spreadsheet" ? "Pricing source: supplier spreadsheet" : "Pricing source: manual / pending extraction"}</div>
-          <div className="po-pricing-note">{poExtracting ? "Reading pricing and PO details from the uploaded PDF/image…" : "PDFs and image scans are checked by Gemini for visible PO values. You can correct any value above before saving."}</div><h3 className="po-workflow-title workflow-second">3. Purchasing / Buyer evaluation</h3><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => { const next = e.target.value; const directory = findDirectoryContact(next, "purchaser"); setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || "" }); setBuyerEmail(directory?.email || ""); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · exact Email Directory match or manually verified</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">4. Requisitioner evaluation</h3><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · exact name match from school Requisitioner Details</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">5. AMD Personnel / Received by evaluation</h3><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · name matched from school directory or Email Directory</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><div className="po-directory-hint">Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 16, marginBottom: 12 }}>
+          <div className="po-pricing-note">{poExtracting ? "Reading pricing and PO details from the uploaded PDF/image…" : "PDFs and image scans are checked by Gemini for visible PO values. You can correct any value above before saving."}</div><h3 className="po-workflow-title workflow-second">3. Purchasing / Buyer evaluation</h3><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => { const next = e.target.value; const directory = findDirectoryContact(next, "purchaser"); setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || "" }); setBuyerEmail(directory?.email || ""); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · exact Email Directory match or manually verified</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">4. Requisitioner evaluation</h3><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · exact name match from school Requisitioner Details</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">5. AMD Personnel / Received by evaluation</h3><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · name matched from school directory or Email Directory</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label>{emailAssignmentProblem()&&<div role="alert" style={{color:"#991b1b",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:10,fontSize:12}}>{emailAssignmentProblem()}</div>}{pendingLinkProblem()&&<div role="alert" style={{color:"#92400e",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:10,fontSize:12}}>{pendingLinkProblem()}</div>}<div className="po-directory-hint">Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 16, marginBottom: 12 }}>
   <strong style={{ fontSize: 13 }}>Evaluation Recipient Status</strong>
   {(["purchaser", "requisitioner", "amd_personnel"] as const)
     .filter((role) => role === "purchaser" ? Boolean(selectedPo.buyerName) : role === "requisitioner" ? Boolean(selectedPo.requisitioner) : Boolean(selectedPo.receivedBy))
