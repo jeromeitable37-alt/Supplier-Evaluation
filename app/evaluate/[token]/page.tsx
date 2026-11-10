@@ -104,7 +104,7 @@ export default function EvaluationPage() {
     }
     setSubmitting(true);
     try {
-      await createPublicRequisitionerEvaluation({
+      const submission = await createPublicRequisitionerEvaluation({
         token, link, scores, comments, overall, ratingRemarks,
         customerSatisfaction: evaluatorRole === "requisitioner" ? {
           timeliness: satisfaction.timeliness,
@@ -114,15 +114,25 @@ export default function EvaluationPage() {
         } : undefined,
       });
       setSubmitted(true);
-      // Firestore is authoritative; if the sheet is offline, the response remains saved.
-      try {
-        const response = await fetch("/api/sync-evaluation", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token }),
-        });
-        if (!response.ok) setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
-      } catch {
-        setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+      if(neonEnabled()){
+        // Neon performs the school Sheet upsert on the server after the record
+        // has been committed. A separate browser webhook call is not needed.
+        if(submission.sheetSync!=="synced"&&submission.sheetSync!=="already_synced"){
+          setSyncWarning("Your evaluation is safely saved. Official Google Sheet delivery is queued for an authorized retry.");
+        }else{
+          setSyncWarning("");
+        }
+      }else{
+        // Original Firebase workflow remains unchanged in Production.
+        try {
+          const response = await fetch("/api/sync-evaluation", {
+            method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({token}),
+          });
+          if(!response.ok)setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+        }catch{
+          setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+        }
       }
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Could not submit your evaluation.");
