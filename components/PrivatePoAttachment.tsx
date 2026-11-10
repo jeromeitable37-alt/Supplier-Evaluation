@@ -23,28 +23,23 @@ export default function PrivatePoAttachment({token,fileId,name,mimeType,index,to
         "&fileId="+encodeURIComponent(fileId)+"&chunkIndex="+i);
       setUrl(URL.createObjectURL(file.blob));
     }catch(e){
-      setError(e instanceof Error?e.message:"Cannot open this private PO.");
+      setError(e instanceof Error?e.message:"Unable to open the PO document.");
     }finally{setLoading(false);}
   }
   return <div className="public-official-page">
     <div className="public-official-page-label">
-      PRIVATE SCHOOL DRIVE · DOCUMENT {index+1} OF {total}
+      OFFICIAL PO DOCUMENT · PAGE {index+1} OF {total}
     </div>
-    <div style={{padding:14,display:"flex",flexWrap:"wrap",gap:10,
-      justifyContent:"space-between",alignItems:"center",background:"#f8fafc"}}>
-      <span style={{fontSize:12,color:"#334155",wordBreak:"break-word"}}>{name}</span>
+    <div className="public-attachment-toolbar">
+      <span className="public-attachment-name">{name}</span>
       {url?
-        <a href={url} target="_blank" rel="noreferrer" style={{
-          padding:"8px 13px",color:"#0f766e",border:"1px solid #14b8a6",
-          borderRadius:8,fontSize:12,fontWeight:700}}>Open official PO</a>:
-        <button type="button" onClick={()=>void open()} disabled={loading} style={{
-          padding:"9px 14px",borderRadius:8,border:"1px solid #0f766e",
-          background:"#0f766e",color:"#fff",fontWeight:700}}>
-          {loading?"Retrieving private PO…":"View official PO"}
+        <a href={url} target="_blank" rel="noreferrer" className="public-document-action secondary">Open document in a new tab</a>:
+        <button type="button" onClick={()=>void open()} disabled={loading} className="public-document-action primary">
+          {loading?"Opening document…":"View document"}
         </button>
       }
     </div>
-    {error&&<p role="alert" style={{color:"#b91c1c",padding:12,fontSize:12}}>{error}</p>}
+    {error&&<p role="alert" className="public-document-error">{error}</p>}
     {url&&((mimeType||"").startsWith("image/")?
       <img src={url} alt={"Official purchase order page "+(index+1)}
         className="public-official-image"/>:
