@@ -195,7 +195,7 @@ export async function POST(request: Request) {
             (Array.isArray(link.po.documentPages) &&
               link.po.documentPages.some((p:{fileId?:string})=>/^[A-Za-z0-9_-]{15,150}$/.test(String(p?.fileId||"")))));
         if (!validRole || !validDocument ||
-            !/^[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]+$/.test(String(link.evaluatorEmail).trim())) {
+            !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(String(link.evaluatorEmail).trim())) {
           throw new AppAccessError("This recipient is not authorized for a single Purchasing Preview evaluation test.",403);
         }
         if (link.emailSentAt || link.lastEmailSentAt ||
