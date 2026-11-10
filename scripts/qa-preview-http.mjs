@@ -24,6 +24,7 @@ const checks=[
   {name:"Link summary rejects anonymous access",method:"GET",path:"/api/neon-link-summary",expected:401},
   {name:"Neon records reject anonymous reads",method:"GET",path:"/api/neon-data?op=list&collection=evaluations",expected:401},
   {name:"Neon records reject anonymous writes",method:"POST",path:"/api/neon-data",expected:401,body:{action:"saveEvaluation",data:{id:"qa-no-auth"}}},
+  {name:"Rollback SQL QA rejects anonymous triggers",method:"POST",path:"/api/neon-qa",expected:401,body:{confirm:"RUN_ROLLBACK_QA"}},
   {name:"Unapproved user enrollment is not anonymous",method:"POST",path:"/api/neon-enroll",expected:401},
   {name:"Unrecognized public token returns 404",method:"GET",path:"/api/neon-public/qaMissingToken202611090000000000",expected:404},
   {name:"Preview school email is disabled",method:"POST",path:"/api/send-evaluation",expected:503,body:{}},
