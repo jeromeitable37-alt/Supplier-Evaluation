@@ -269,14 +269,14 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         cache:"no-store",headers:token?{Authorization:"Bearer "+token}:{},
       });
       const data = await response.json();
-      if (!response.ok || !data?.ok) throw new Error(data?.message || "Google Sheet is unavailable.");
+      if (!response.ok || !data?.ok) throw new Error(data?.message || "Purchase order records are currently unavailable.");
       setPoRecords(Array.isArray(data.poRecords) ? data.poRecords : []);
       setPrfRecords(Array.isArray(data.prfRecords) ? data.prfRecords : []);
       setRequisitioners(Array.isArray(data.requisitioners) ? data.requisitioners : []);
       setFetchedAt(data.fetchedAt || new Date().toISOString());
-      onNotify(`Google Sheet synced · ${Array.isArray(data.poRecords) ? data.poRecords.length : 0} PO groups · ${Array.isArray(data.prfRecords) ? data.prfRecords.length : 0} PRF records loaded.`);
+      onNotify(`Records synced · ${Array.isArray(data.poRecords) ? data.poRecords.length : 0} PO groups · ${Array.isArray(data.prfRecords) ? data.prfRecords.length : 0} PRF records loaded.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to sync the Google Sheet.";
+      const message = error instanceof Error ? error.message : "Unable to refresh purchase order records.";
       setLiveError(message);
       onNotify(message);
     } finally {
@@ -845,17 +845,17 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const chosen = files.filter(Boolean);
     if (!chosen.length) return;
     if(!schoolDriveEnabled){
-      onNotify("The school-owned Google Drive must be verified and enabled by the school account first. Select Check Drive Connection to see the setup status. No PO was uploaded.");
+      onNotify("Document upload access must be enabled by an administrator. Select Check document access to see the setup status. No PO was uploaded.");
       return;
     }
     if(!selectedPo.poNumber.trim()){
-      onNotify("Enter the PO number before archiving its official document in school Drive.");
+      onNotify("Enter the PO number before saving the official document.");
       return;
     }
     const totalBytes=chosen.reduce((sum,file)=>sum+file.size,0);
     if(chosen.some(file=>file.size<1||file.size>8*1024*1024||
       !["application/pdf","image/jpeg","image/png","image/webp"].includes(file.type))){
-      onNotify("Only PDF, JPG, PNG or WebP up to 8 MiB each can be stored in the school Drive.");
+      onNotify("Choose PDF, JPG, PNG, or WebP files up to 8 MiB each.");
       return;
     }
     if(totalBytes>20*1024*1024){
@@ -905,7 +905,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         });
         const saved=await response.json();
         if(!response.ok||!saved.ok||!saved.fileId)throw new Error(
-          saved.message||"School Drive could not finalize the official PO document.");
+          saved.message||"Could not finish saving the official PO document.");
         documentPages.push({
           fileId:String(saved.fileId),
           url:"/api/po-drive-file?fileId="+encodeURIComponent(String(saved.fileId)),
