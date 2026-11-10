@@ -82,11 +82,11 @@ export async function neonPublicGet<T>(token:string):Promise<T>{
 
 export async function neonPublicSubmit(
   token:string,data:Record<string,unknown>,
-):Promise<{ok:true;evaluationId:string;submittedAt:string}>{
+):Promise<{ok:true;evaluationId:string;submittedAt:string;sheetSync?:"queued"|"synced"|"already_synced"|"processing"}>{
   const response=await fetch("/api/neon-public/"+encodeURIComponent(token),{
     method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),cache:"no-store",
   });
-  const result=await response.json() as {ok:boolean;message?:string;evaluationId?:string;submittedAt?:string};
+  const result=await response.json() as {ok:boolean;message?:string;evaluationId?:string;submittedAt?:string;sheetSync?:"queued"|"synced"|"already_synced"|"processing"};
   if(!response.ok||!result.ok)throw new Error(result.message||"Evaluation submission failed.");
-  return {ok:true,evaluationId:result.evaluationId||"public-"+token,submittedAt:result.submittedAt||""};
+  return {ok:true,evaluationId:result.evaluationId||"public-"+token,submittedAt:result.submittedAt||"",sheetSync:result.sheetSync};
 }
