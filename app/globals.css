@@ -1054,3 +1054,418 @@ textarea:focus-visible, select:focus-visible {
   .public-stars { gap:3px; }
   .public-stars button { min-width:39px; min-height:40px; }
 }
+
+
+/* ============================================================
+   FORM CONTRAST + DUAL-THEME ACCESSIBILITY FIX (Nov 2026)
+   Explicitly style native inputs so the OS/browser dark preference
+   cannot make dark text disappear on dark textboxes in light mode.
+   ============================================================ */
+html { color-scheme:light; }
+html[data-theme="dark"] { color-scheme:dark; }
+:root {
+  --se-input-bg:#ffffff;
+  --se-input-fg:#172a20;
+  --se-input-border:#cbdad1;
+  --se-input-placeholder:#64766a;
+  --se-input-focus:#0b7e53;
+}
+html[data-theme="dark"] {
+  --se-input-bg:#1b2c23;
+  --se-input-fg:#f0faf3;
+  --se-input-border:#526b5e;
+  --se-input-placeholder:#b1c5b8;
+  --se-input-focus:#77e0ad;
+}
+input:not([type="checkbox"]):not([type="radio"]),textarea,select {
+  caret-color:var(--se-input-fg);
+}
+.field input:not([type="checkbox"]):not([type="radio"]),
+.field textarea,.field select,.auth-field input,
+.po-send-panel .po-input-wrap input,
+.po-pricing-table .po-price-input {
+  background-color:var(--se-input-bg)!important;
+  color:var(--se-input-fg)!important;
+  border-color:var(--se-input-border)!important;
+  font-family:var(--se-font-body);
+}
+.field input::placeholder,.field textarea::placeholder,
+.auth-field input::placeholder,.po-send-panel input::placeholder {
+  color:var(--se-input-placeholder)!important;
+  opacity:1;
+}
+.field input:focus-visible,.field textarea:focus-visible,.field select:focus-visible,
+.auth-field input:focus-visible,.po-pricing-table .po-price-input:focus-visible {
+  border-color:var(--se-input-focus)!important;
+  outline:2px solid color-mix(in srgb,var(--se-input-focus) 40%,transparent);
+  outline-offset:1px;
+}
+
+/* Standalone evaluator forms inherit the saved website theme. */
+.public-eval-shell {
+  color-scheme:light;
+  --pe-bg:#f3f8f5;
+  --pe-card:#ffffff;
+  --pe-card-subtle:#f7faf8;
+  --pe-border:#d9e6de;
+  --pe-text:#182a21;
+  --pe-muted:#52695c;
+  --pe-accent:#0b7650;
+  --pe-hint:#64796b;
+  --pe-control:#ffffff;
+  --pe-control-text:#182a21;
+  --pe-control-border:#bacdc0;
+  --pe-placeholder:#6a7d70;
+  background:linear-gradient(145deg,#f1f8f4 0%,#f6faf7 55%,#edf6f0 100%);
+  color:var(--pe-text);
+}
+html[data-theme="dark"] .public-eval-shell {
+  color-scheme:dark;
+  --pe-bg:#0c1712;
+  --pe-card:#17251d;
+  --pe-card-subtle:#1d3025;
+  --pe-border:#3b5144;
+  --pe-text:#eff8f1;
+  --pe-muted:#b9cec0;
+  --pe-accent:#85e6b7;
+  --pe-hint:#abc3b4;
+  --pe-control:#203429;
+  --pe-control-text:#f3fcf6;
+  --pe-control-border:#5a7866;
+  --pe-placeholder:#b8cfc0;
+  background:linear-gradient(145deg,#0b1611 0%,#112119 55%,#0d1b15 100%);
+  color:var(--pe-text);
+}
+.public-eval-wrap,
+.public-eval-wrap section,
+.public-eval-wrap section>div { min-width:0; }
+.public-eval-header { background:#10382b; color:#ffffff; }
+.public-eval-header .public-eval-brand { flex:1; min-width:0; }
+.public-eval-header .public-eval-brand h1 { color:#ffffff; }
+.public-eval-header .public-eval-brand small { color:#b8e7ce; }
+.public-eval-header .public-eval-brand p { color:#e1f3e9; }
+.public-theme-toggle {
+  flex:0 0 auto;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  margin-left:auto;
+  padding:9px 12px;
+  min-height:40px;
+  border:1px solid rgba(255,255,255,.43);
+  border-radius:10px;
+  background:rgba(255,255,255,.1);
+  color:#fff;
+  font:700 12px/1.4 var(--se-font-body);
+  white-space:nowrap;
+  transition:background .15s,border-color .15s;
+}
+.public-theme-toggle:hover { background:rgba(255,255,255,.2); }
+.public-theme-toggle:focus-visible { outline:3px solid #b8f5d4; outline-offset:3px; }
+html[data-theme="dark"] .public-eval-header { background:#0c3125; }
+
+/* Surface colors and borders — no unreadable white-on-white or black-on-black. */
+.public-eval-shell .public-po-summary>div,
+.public-eval-shell .public-delivery-strip>div,
+.public-eval-shell .public-po-pricing,
+.public-eval-shell .public-po-paper,
+.public-eval-shell .public-criterion,
+.public-eval-shell .public-comments,
+.public-eval-shell .public-eval-success,
+.public-eval-shell .public-eval-card {
+  background:var(--pe-card)!important;
+  color:var(--pe-text);
+  border-color:var(--pe-border)!important;
+}
+.public-eval-shell .public-po-summary span,
+.public-eval-shell .public-delivery-strip span,
+.public-eval-shell .public-po-paper-head span,
+.public-eval-shell .public-submit-row>div span,
+.public-eval-shell .public-criterion>small,
+.public-eval-shell .public-comments label>span,
+.public-eval-shell .public-eval-footer {
+  color:var(--pe-hint);
+}
+.public-eval-shell .public-po-summary strong,
+.public-eval-shell .public-delivery-strip strong,
+.public-eval-shell .public-criterion h2,
+.public-eval-shell .public-criterion h3,
+.public-eval-shell .public-eval-intro h2,
+.public-eval-shell .public-comments label,
+.public-eval-shell .public-submit-row>div strong,
+.public-eval-shell .public-po-paper-head b,
+.public-eval-shell .public-po-footer b {
+  color:var(--pe-text);
+}
+.public-eval-shell .public-criterion p,
+.public-eval-shell .public-eval-intro p,
+.public-eval-shell .public-eval-card.center p,
+.public-eval-shell .public-eval-success p {
+  color:var(--pe-muted);
+}
+.public-eval-shell .public-criterion.rated {
+  border-color:var(--pe-accent)!important;
+  box-shadow:0 4px 18px rgba(15,123,83,.1);
+}
+.public-eval-shell .public-eval-intro>div { color:var(--pe-accent); }
+.public-eval-shell .public-po-paper-head,
+.public-eval-shell .public-official-doc-head,
+.public-eval-shell .public-official-page,
+.public-eval-shell .public-official-page-label {
+  background:var(--pe-card-subtle);
+  color:var(--pe-text);
+  border-color:var(--pe-border);
+}
+.public-eval-shell .public-official-doc-head b { color:var(--pe-text); }
+.public-eval-shell .public-official-doc-head small { color:var(--pe-muted); }
+.public-eval-shell .public-official-doc-head>span {
+  background:var(--pe-card);
+  color:var(--pe-accent);
+}
+.public-eval-shell .public-official-doc-head a { color:var(--pe-accent); }
+.public-eval-shell .public-po-footer,
+.public-eval-shell .public-attachment-toolbar,
+.public-eval-shell .public-po-pricing-footer {
+  background:var(--pe-card-subtle);
+  color:var(--pe-text);
+  border-color:var(--pe-border);
+}
+.public-eval-shell .public-po-footer span,
+.public-eval-shell .public-po-pricing-footer span { color:var(--pe-muted); }
+.public-eval-shell .public-attachment-name { color:var(--pe-text); }
+.public-eval-shell .public-document-action.secondary {
+  background:var(--pe-card);
+  color:var(--pe-accent);
+  border-color:var(--pe-accent);
+}
+.public-eval-shell .public-document-action.primary {
+  background:#0b7650;
+  color:#fff;
+  border-color:#0b7650;
+}
+
+/* Centralized pricing layout; responsive horizontally scrolling columns. */
+.public-eval-shell .public-po-pricing {
+  overflow:hidden;
+  margin-bottom:20px;
+  box-shadow:0 3px 14px rgba(16,48,32,.06);
+}
+.public-po-pricing-head {
+  padding:19px 20px;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:16px;
+  border-bottom:1px solid var(--pe-border);
+}
+.public-po-pricing-title {
+  display:block;
+  font:800 16px/1.35 var(--se-font-heading);
+  color:var(--pe-text);
+}
+.public-po-pricing-hint {
+  display:block;
+  margin-top:5px;
+  color:var(--pe-muted);
+  font-size:12px;
+  line-height:1.55;
+}
+.public-po-pricing-total { text-align:right; }
+.public-po-pricing-total strong {
+  display:block;
+  font:800 18px/1.35 var(--se-font-heading);
+  color:var(--pe-accent);
+  overflow-wrap:anywhere;
+}
+.public-po-pricing-total small {
+  display:block;
+  margin-top:4px;
+  color:var(--pe-muted);
+  font-size:12px;
+}
+.public-po-pricing-scroll {
+  overflow-x:auto;
+  width:100%;
+  overscroll-behavior-inline:contain;
+}
+.public-po-pricing-table {
+  width:100%;
+  min-width:600px;
+  border-collapse:collapse;
+  font-size:13px;
+  color:var(--pe-text);
+}
+.public-po-pricing-table thead { background:var(--pe-card-subtle); }
+.public-po-pricing-table th {
+  padding:12px 13px;
+  border-bottom:1px solid var(--pe-border);
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  color:var(--pe-muted);
+}
+.public-po-pricing-table th.number,
+.public-po-pricing-table td.number { text-align:right; }
+.public-po-pricing-table th.description,
+.public-po-pricing-table td.description { text-align:left; }
+.public-po-pricing-table td {
+  padding:12px 13px;
+  border-bottom:1px solid var(--pe-border);
+  font-size:13px;
+  line-height:1.5;
+  color:var(--pe-text);
+  vertical-align:top;
+}
+.public-po-pricing-table td.description { min-width:210px; overflow-wrap:anywhere; }
+.public-po-pricing-table td.number { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.public-po-pricing-table td.price { color:var(--pe-accent); font-weight:650; }
+.public-po-pricing-table td.total { font-weight:750; }
+.public-po-pricing-empty {
+  text-align:center;
+  padding:20px!important;
+  color:var(--pe-muted)!important;
+}
+.public-po-pricing-footer {
+  display:flex;
+  justify-content:flex-end;
+  padding:15px 20px;
+  border-top:1px solid var(--pe-border);
+}
+.public-po-pricing-footer>div {
+  min-width:min(100%,270px);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:20px;
+  font-size:13px;
+}
+.public-po-pricing-footer b { font-size:15px; color:var(--pe-text); }
+
+/* All evaluator textareas explicitly specify both their ink and paper.
+   This fixes the user's dark textbox with invisible dark input. */
+.public-eval-shell textarea,
+.public-eval-shell input:not([type="checkbox"]):not([type="radio"]),
+.public-eval-shell select {
+  display:block;
+  width:100%;
+  min-width:0;
+  background-color:var(--pe-control)!important;
+  color:var(--pe-control-text)!important;
+  border:1px solid var(--pe-control-border)!important;
+  caret-color:var(--pe-control-text);
+  color-scheme:inherit;
+  opacity:1;
+  font:400 14px/1.6 var(--se-font-body);
+  border-radius:10px;
+}
+.public-eval-shell textarea {
+  width:100%;
+  min-height:120px;
+  max-width:100%;
+  margin-top:9px;
+  padding:13px 15px;
+  resize:vertical;
+}
+.public-eval-shell textarea::placeholder,
+.public-eval-shell input::placeholder {
+  color:var(--pe-placeholder)!important;
+  opacity:1;
+}
+.public-eval-shell textarea:focus,
+.public-eval-shell input:focus-visible,
+.public-eval-shell select:focus-visible {
+  border-color:var(--pe-accent)!important;
+  outline:2px solid color-mix(in srgb,var(--pe-accent) 50%,transparent);
+  outline-offset:1px;
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--pe-accent) 12%,transparent);
+}
+.public-rating-reason {
+  display:block;
+  margin-top:15px;
+  font-size:13px;
+  line-height:1.5;
+  font-weight:700;
+  color:var(--pe-text);
+}
+.public-eval-shell .public-rating-textarea { margin-top:8px; min-height:92px; }
+.public-eval-shell .public-comments {
+  display:block;
+  margin-top:18px;
+}
+.public-eval-shell .public-comments label {
+  display:block;
+  line-height:1.5;
+  font-size:14px;
+}
+.public-eval-shell .public-comments label>span { font-size:12px; margin-left:2px; }
+.public-eval-shell .public-comments textarea { margin-top:10px; min-height:128px; }
+.public-eval-shell .public-stars button { color:#9baea2; }
+.public-eval-shell .public-stars button.active,
+.public-eval-shell .public-stars button:hover { color:#dfa326; }
+html[data-theme="dark"] .public-eval-shell .public-stars button { color:#738d7f; }
+html[data-theme="dark"] .public-eval-shell .public-stars button.active,
+html[data-theme="dark"] .public-eval-shell .public-stars button:hover { color:#ffd16e; }
+.public-eval-shell .public-submit-row {
+  padding-top:16px;
+  margin-top:20px;
+  border-top:1px solid var(--pe-border);
+}
+.public-eval-shell .public-submit-row .btn.primary {
+  background:#0b7650;
+  border:1px solid #0b7650;
+  color:#fff;
+  min-width:172px;
+  font-size:13px;
+  font-weight:750;
+  border-radius:10px;
+}
+.public-eval-shell .public-submit-row .btn.primary:hover { background:#085c3e; }
+.public-eval-shell .public-eval-footer { line-height:1.65; }
+.public-eval-shell .public-eval-success { color:var(--pe-accent); }
+.public-eval-shell .public-eval-success h2 { color:var(--pe-text); }
+.public-eval-shell .public-eval-error {
+  background:#fff4f3;
+  color:#943327;
+  border:1px solid #efb1ab;
+}
+html[data-theme="dark"] .public-eval-shell .public-eval-error {
+  background:#381b19;
+  color:#ffbfaf;
+  border-color:#8a463b;
+}
+.public-eval-shell .public-generated-warning {
+  background:var(--pe-card-subtle);
+  color:var(--pe-text);
+  border-color:var(--pe-border);
+}
+.public-eval-shell .public-generated-warning b,
+.public-eval-shell .public-generated-warning span { color:var(--pe-text); }
+
+@media(max-width:800px) {
+  .public-eval-shell .public-po-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .public-eval-shell .public-delivery-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .public-eval-shell .public-eval-header { flex-wrap:wrap; }
+  .public-eval-shell .public-theme-toggle { margin-left:auto; }
+}
+@media(max-width:640px) {
+  .public-eval-shell .public-eval-header { gap:12px; align-items:center!important; }
+  .public-eval-shell .public-theme-toggle { width:100%; margin:3px 0 0; }
+  .public-eval-shell .public-eval-header .public-eval-brand h1 { font-size:21px; }
+  .public-eval-shell .public-po-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .public-eval-shell .public-delivery-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .public-eval-shell .public-po-summary span,
+  .public-eval-shell .public-delivery-strip span { font-size:10px; }
+  .public-eval-shell .public-po-summary strong,
+  .public-eval-shell .public-delivery-strip strong { font-size:13px; }
+  .public-po-pricing-head { flex-direction:column; padding:16px; }
+  .public-po-pricing-total { text-align:left; }
+  .public-po-pricing-footer { padding:15px 16px; }
+  .public-po-pricing-footer>div { min-width:0; width:100%; }
+  .public-eval-shell .public-criterion { padding:16px; }
+  .public-eval-shell .public-comments { padding:16px; }
+  .public-eval-shell .public-submit-row .btn { width:100%; }
+  .public-eval-shell textarea { font-size:16px; }
+}
