@@ -23,6 +23,26 @@
 8. **ISO print:** Existing `SISC/EOMSF-PUR-006 REV.000 6/29/26` printable Letter layout remains, with PO/PRF, three evaluator columns, recommendations, signatures reserved for authorized real people, and a separate Requisitioner Customer Satisfaction section. Document Control still needs to approve the printout's correspondence to the official controlled form.
 9. **Private Sheet compatibility:** `scripts/southville-private-sheet-lookup.gs` adds a **read-only, allowlisted** Apps Script action to return bounded rows of the official/V2 workbook while keeping the sheet private. The accompanying `scripts/southville-evaluation-webhook.gs` adds a `read_sheet_rows` dispatch action to the EXISTING authenticated webhook. No change to `Code.gs`. Preview switch `GOOGLE_SHEET_PRIVATE_LOOKUP_ENABLED` is OFF until that Apps Script version is installed and read-tested by the school.
 
+## Direct connector checks on 10 November 2026
+
+- **Official school workbook privacy:** Google Drive metadata still reports
+  an `anyone` / `reader` permission for the existing
+  `PURCHASING SUPPLIER EVALUATION` workbook, alongside more limited permissions.
+  This is **not private** yet. No permission was changed. Restricting it before
+  the deployed site's old CSV workflow has been replaced could break live PO/PRF
+  lookup and school operations.
+- **Approved school PO archive:** The named Drive folder was **not accessible
+  to the connected account** (Drive returned 404). This does not prove that the
+  folder does not exist: only Sir GC's authorized school account may have access.
+  The code and school webhook folder checks are ready, but no Drive upload or
+  privacy test was performed on the actual folder.
+- **External integration switches:** `NEXT_PUBLIC_DATA_BACKEND=neon` and a
+  sensitive server-side `DATABASE_URL` are present only for this Vercel Preview
+  branch. `NEON_PREVIEW_EXTERNAL_WRITES_ENABLED` and
+  `GOOGLE_SHEET_PRIVATE_LOOKUP_ENABLED` have not been configured; the existing
+  `PO_DRIVE_UPLOAD_ENABLED` is not enabled. Real school emails, private Drive
+  uploads and official Sheet writes are therefore **not live** in Preview.
+
 ## School-owner-only activation checklist (not yet performed)
 
 These steps require Sir GC/Southville's authorized Google Workspace/Apps Script and School Procurement/Quality approval. **Do not paste service secrets or data into GitHub/ChatGPT.**
