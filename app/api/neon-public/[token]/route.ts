@@ -22,6 +22,11 @@ export async function GET(_request: Request,ctx: Context) {
     const result=await db.query("SELECT payload FROM se_evaluation_links WHERE token=$1",[token]);
     const link=result.rows[0]?.payload;
     if (!link) throw new AppAccessError("Evaluation link is invalid or unavailable.",404);
+    const expiry=typeof link.expiresAt==="string"?Date.parse(link.expiresAt):NaN;
+    if(link.status==="pending"&&Number.isFinite(expiry)&&expiry<=Date.now()){
+      return NextResponse.json({ok:false,message:"This evaluation link has expired. Please contact the Purchasing Office."},
+        {status:410,headers:{"Cache-Control":"no-store"}});
+    }
     return NextResponse.json({ok:true,data:{...link,token}},{headers:{"Cache-Control":"no-store"}});
   }catch(error){return errorResponse(error);}
 }
@@ -57,6 +62,10 @@ export async function POST(request:Request,ctx:Context){
       if(!stored)throw new AppAccessError("Evaluation link not found.",404);
       if(stored.link_status!=="pending") throw new AppAccessError("This evaluation was already submitted.",409);
       const link=stored.payload as Record<string,unknown>;
+      const expiry=s(link.expiresAt)?Date.parse(s(link.expiresAt)):NaN;
+      if(Number.isFinite(expiry)&&expiry<=Date.now()){
+        throw new AppAccessError("This evaluation link has expired. Contact the Purchasing Office.",410);
+      }
       const po=object(link.po);
       const role=roleOf(link.evaluatorRole);
       const criteria=role==="purchaser"?FIVE:FOUR;
@@ -124,6 +133,13 @@ export async function POST(request:Request,ctx:Context){
         " VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(id) DO NOTHING RETURNING id",
         [id,row.poNumber,row.supplier,role,row.evaluationDate,overall,JSON.stringify(row)]);
       if(inserted.rowCount!==1)throw new AppAccessError("This evaluation has already been submitted.",409);
+      // Durable pending delivery state supports controlled retry without
+      // asking an evaluator to submit again when the school Sheet is offline.
+      await client.query(
+        "INSERT INTO se_sheet_sync(evaluation_id,state,attempts,last_error,updated_at) "+
+        "VALUES($1,'failed',0,'awaiting school integration',now()) ON CONFLICT(evaluation_id) DO NOTHING",
+        [id],
+      );
       const updatedLink={...link,token,status:"submitted",submittedAt,evaluationId:id};
       await client.query(
         "UPDATE se_evaluation_links SET link_status='submitted',payload=$2::jsonb,imported_at=now() WHERE token=$1",
