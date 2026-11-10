@@ -59,8 +59,11 @@ async function rawRequest(check){
 }
 
 function vercelCliRequest(check) {
+  // --deployment is a Vercel option. Everything after -- belongs to system curl.
+  // Explicit project/team selection avoids relying on a Cloud Shell local link.
   const argv=[
-    "curl",ROOT+check.path,"-sS","-o","/dev/null","-w","%{http_code}",
+    "curl",check.path,"--deployment",ROOT,
+    "--","-sS","-o","/dev/null","-w","%{http_code}",
     "-X",check.method,
   ];
   if(check.body){
@@ -68,15 +71,30 @@ function vercelCliRequest(check) {
   }
   const run=spawnSync("vercel",argv,{
     encoding:"utf8",timeout:25000,maxBuffer:1024*512,windowsHide:true,
-    env:process.env,
+    env:{
+      ...process.env,
+      VERCEL_PROJECT_ID:"prj_gWCHxdOZQU2wCDWYNGAaaYafi3wx",
+      VERCEL_ORG_ID:"team_504W4s49QzNJAj6GFkoBsrtJ",
+    },
   });
   if(run.error) {
     if(run.error.code==="ENOENT")throw new Error("Vercel CLI is not installed. Run npm install -g vercel.");
     throw new Error("Vercel CLI request unavailable: "+run.error.message);
   }
   if(run.status!==0) {
-    // Do not echo response bodies, account details or tokens.
-    throw new Error("Vercel CLI authentication or request failed. Check vercel whoami, then retry.");
+    // Emit only safe, preselected error categories. Never print raw stderr:
+    // Vercel may include request URLs, headers or confidential auth material.
+    const stderr=String(run.stderr||"");
+    const reason=/unknown option|unknown argument|unsupported option/i.test(stderr)
+      ? "Unsupported Vercel CLI argument."
+      : /not linked|link your project|could not find project/i.test(stderr)
+        ? "Vercel could not resolve the project. Verify the active team and project."
+        : /unauthorized|forbidden|permission|not authenticated|login/i.test(stderr)
+          ? "Vercel account is missing Preview access or needs authentication."
+          : /deployment not found|couldn't find.*deployment/i.test(stderr)
+            ? "The pinned Preview deployment is unavailable."
+            : "Vercel CLI invocation failed.";
+    throw new Error(reason+" Confirm with: vercel curl /api/neon-pilot --deployment "+ROOT+" -- -sS -o /dev/null -w '%{http_code}'");
   }
   const statusText=String(run.stdout||"").trim().match(/\b[1-5][0-9]{2}\s*$/)?.[0]?.trim();
   const status=Number(statusText);
