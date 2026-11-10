@@ -135,7 +135,7 @@ export async function POST(request: Request) {
     );
     check("Create a temporary purchase order", poInserted.rowCount === 1);
     await client.query(
-      "UPDATE se_purchase_orders SET po_status='Received',payload=jsonb_set(payload,'{status}', '"Received"'::jsonb) WHERE id=$1",
+      "UPDATE se_purchase_orders SET po_status='Received',payload=jsonb_set(payload,'{status}', to_jsonb('Received'::text)) WHERE id=$1",
       [purchaseOrderId],
     );
     const revisedPo = await client.query(
@@ -158,7 +158,7 @@ export async function POST(request: Request) {
     check("Create a temporary evaluation link", insertedLink.rowCount === 1);
     const claimedLink = await client.query(
       "UPDATE se_evaluation_links SET link_status='submitted'," +
-      "payload=jsonb_set(payload,'{status}', '"submitted"'::jsonb) " +
+      "payload=jsonb_set(payload,'{status}', to_jsonb('submitted'::text)) " +
       "WHERE token=$1 AND link_status='pending' RETURNING token",
       [token],
     );
