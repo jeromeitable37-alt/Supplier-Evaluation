@@ -266,7 +266,7 @@ export async function POST(request: Request) {
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[workKey]);
         const existing=await client.query(
           "SELECT payload,link_status FROM se_evaluation_links "+
-          "WHERE evaluator_role=$1 "+
+          "WHERE evaluator_role=$1 AND link_status IN ('pending','submitted') "+
           "AND (($2::text<>'' AND lower(btrim(COALESCE(payload->'po'->>'poNumber','')))=$2) "+
           "OR ($2::text='' AND $3::text<>'' AND lower(btrim(COALESCE(payload->'po'->>'prfNumber','')))=$3)) "+
           "ORDER BY CASE WHEN link_status='pending' THEN 0 ELSE 1 END, imported_at DESC LIMIT 1 FOR UPDATE",
@@ -277,16 +277,23 @@ export async function POST(request: Request) {
         if(found){
           if(found.link_status!=="pending")throw new AppAccessError(
             "This evaluator role already submitted for this PO/PRF.",409);
-          if(s(found.payload.evaluatorEmail).trim().toLowerCase()!==evaluatorEmail){
-            throw new AppAccessError(
-              "An active evaluation link exists for a different recipient. Review the existing link before sending.",409);
-          }
           const expiry=s(found.payload.expiresAt);
-          if(expiry&&Date.parse(expiry)<=Date.now()){
-            throw new AppAccessError(
-              "The earlier evaluation link expired. Ask an administrator to review it before reissuing.",409);
+          if(expiry&&Number.isFinite(Date.parse(expiry))&&Date.parse(expiry)<=Date.now()){
+            // Preserve the original link for audit, but retire it before a
+            // fresh link is created. Prior token remains invalid forever.
+            const retired={...found.payload,status:"expired",expiredAt:new Date().toISOString()};
+            await client.query(
+              "UPDATE se_evaluation_links SET link_status='expired',payload=$2::jsonb,imported_at=now() "+
+              "WHERE token=$1 AND link_status='pending'",
+              [s(found.payload.token),JSON.stringify(retired)],
+            );
+          }else{
+            if(s(found.payload.evaluatorEmail).trim().toLowerCase()!==evaluatorEmail){
+              throw new AppAccessError(
+                "An active evaluation link exists for a different recipient. Review the existing link before sending.",409);
+            }
+            return {...found.payload,reused:true};
           }
-          return {...found.payload,reused:true};
         }
         const token=randomBytes(20).toString("hex");
         const now=new Date();
