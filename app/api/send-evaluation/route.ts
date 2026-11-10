@@ -164,6 +164,10 @@ export async function POST(request: Request) {
       if(!link||link.status!=="pending"||!link.po?.poNumber||!link.evaluatorEmail){
         throw new AppAccessError("The evaluation link is unavailable or already completed.",409);
       }
+      const expiry=typeof link.expiresAt==="string"?Date.parse(link.expiresAt):NaN;
+      if(Number.isFinite(expiry)&&expiry<=Date.now())throw new AppAccessError(
+        "This evaluation link has expired. Create a new link after authorization.",410);
+
       // Disallow changing recipient, document URLs, PO metadata and link role
       // through an untrusted browser request. Reconstruct from trusted SQL.
       // Atomic per-link email claim: no concurrent or rapid repeat sends.
@@ -198,6 +202,7 @@ export async function POST(request: Request) {
         poDocumentName:storedPo.documentName||String(storedPo.poNumber)+".pdf",
         poDocuments:storedPo.documentPages||[{
           url:storedPo.documentUrl,
+          fileId:storedPo.documentFileId,
           name:storedPo.documentName||String(storedPo.poNumber)+".pdf",
           mimeType:storedPo.documentMimeType,
         }],
@@ -256,8 +261,9 @@ export async function POST(request: Request) {
     const docs = Array.isArray(poDocuments) && poDocuments.length
       ? poDocuments
       : (poDocumentUrl ? [{ url: poDocumentUrl, name: poDocumentName || `${po.poNumber}.pdf`, mimeType: po.documentMimeType }] : []);
-    const attachments = docs.filter((doc: any) => doc?.url).map((doc: any, index: number) => ({
-      url: String(doc.url),
+    const attachments = docs.filter((doc: any) => doc?.fileId || doc?.url)
+      .map((doc: any, index: number) => ({
+      ...(doc?.fileId ? {fileId:String(doc.fileId)} : {url:String(doc.url)}),
       name: officialPoAttachmentName({
         poNumber: po.poNumber, index, originalName: doc.name,
         mimeType: doc.mimeType, url: doc.url,
@@ -297,7 +303,7 @@ export async function POST(request: Request) {
       const now=new Date().toISOString();
       await appPool().query(
         "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() WHERE token=$1",
-        [claimedToken,JSON.stringify({emailSendStatus:"sent",emailSentAt:now,
+        [claimedToken,JSON.stringify({emailSendStatus:"sent",
           lastEmailSentAt:now,lastEmailRecipient:resolvedTo})],
       );
     }
