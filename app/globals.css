@@ -1469,3 +1469,147 @@ html[data-theme="dark"] .public-eval-shell .public-eval-error {
   .public-eval-shell .public-submit-row .btn { width:100%; }
   .public-eval-shell textarea { font-size:16px; }
 }
+
+
+/* Final theme consistency: admin PO panels, notices, and form states */
+.public-eval-demo-notice {
+  margin:0 0 18px;
+  padding:13px 16px;
+  border:1px solid #e2c57f;
+  border-radius:11px;
+  background:#fff7df;
+  color:#634716;
+  font-size:13px;
+  line-height:1.55;
+  font-weight:650;
+}
+html[data-theme="dark"] .public-eval-demo-notice {
+  background:#392c1a;
+  border-color:#896a37;
+  color:#f9dca2;
+}
+.public-eval-sync-warning {
+  color:#9a411d;
+  font-size:13px;
+  line-height:1.6;
+}
+html[data-theme="dark"] .public-eval-sync-warning { color:#ffd29c; }
+html[data-theme="dark"] .public-eval-shell .public-eval-success p {
+  color:var(--pe-muted)!important;
+}
+html[data-theme="dark"] .public-eval-shell .public-po-paper,
+html[data-theme="dark"] .public-eval-shell .public-attachment-toolbar,
+html[data-theme="dark"] .public-eval-shell .public-po-footer,
+html[data-theme="dark"] .public-eval-shell .public-po-pricing,
+html[data-theme="dark"] .public-eval-shell .public-po-pricing-table thead,
+html[data-theme="dark"] .public-eval-shell .public-po-pricing-footer {
+  color:var(--pe-text);
+}
+html[data-theme="dark"] .public-eval-shell .public-official-page-label {
+  color:var(--pe-muted);
+}
+html[data-theme="dark"] .public-eval-shell .public-po-frame {
+  background:#fff; /* Actual PDF pages retain their original colors */
+}
+
+/* Purchasing administration inherits the selected visual theme. */
+html[data-theme="dark"] .po-generator-modal,
+html[data-theme="dark"] .po-send-panel,
+html[data-theme="dark"] .po-preview-card,
+html[data-theme="dark"] .stored-po-viewer,
+html[data-theme="dark"] .po-generator-panel {
+  background:var(--panel);
+  color:var(--text);
+  border-color:var(--line);
+}
+html[data-theme="dark"] .po-generator-modal-head,
+html[data-theme="dark"] .po-delivery-summary,
+html[data-theme="dark"] .po-pricing-table-wrap,
+html[data-theme="dark"] .po-pricing-totals,
+html[data-theme="dark"] .po-link-box,
+html[data-theme="dark"] .po-source-note {
+  background:var(--soft2);
+  border-color:var(--line);
+  color:var(--text);
+}
+html[data-theme="dark"] .po-delivery-summary>div {
+  background:var(--panel);
+  border-color:var(--line);
+  color:var(--text);
+}
+html[data-theme="dark"] .po-delivery-summary b,
+html[data-theme="dark"] .po-send-panel .po-workflow-title,
+html[data-theme="dark"] .po-pricing-totals label,
+html[data-theme="dark"] .po-source-note span {
+  color:var(--text)!important;
+}
+html[data-theme="dark"] .po-generator-modal-head h2,
+html[data-theme="dark"] .po-send-panel .po-section-title {
+  color:var(--text)!important;
+}
+html[data-theme="dark"] .po-send-panel .field>span,
+html[data-theme="dark"] .po-pricing-source,
+html[data-theme="dark"] .po-delivery-summary span,
+html[data-theme="dark"] .po-pricing-note,
+html[data-theme="dark"] .po-directory-hint {
+  color:var(--muted)!important;
+}
+html[data-theme="dark"] .po-pricing-table {
+  background:var(--panel)!important;
+  color:var(--text)!important;
+}
+html[data-theme="dark"] .po-pricing-table thead th {
+  background:var(--soft2)!important;
+  color:#c2d4c7!important;
+  border-bottom-color:var(--line)!important;
+}
+html[data-theme="dark"] .po-pricing-table tbody td {
+  background:var(--panel)!important;
+  color:var(--text)!important;
+  border-bottom-color:var(--line)!important;
+}
+html[data-theme="dark"] .po-pricing-table .po-price-input {
+  background:var(--se-input-bg)!important;
+  color:var(--se-input-fg)!important;
+  border-color:var(--se-input-border)!important;
+}
+html[data-theme="dark"] .po-send-panel .btn.secondary,
+html[data-theme="dark"] .po-generator-actions .btn.secondary {
+  background:var(--panel);
+  color:var(--text);
+  border-color:var(--line);
+}
+html[data-theme="dark"] .po-send-panel .btn.ghost,
+html[data-theme="dark"] .po-generator-actions .btn.ghost {
+  background:var(--soft2);
+  color:var(--text);
+  border-color:var(--line);
+}
+html[data-theme="dark"] .stored-doc-callout,
+html[data-theme="dark"] .stored-po-toolbar,
+html[data-theme="dark"] .public-attachment-toolbar {
+  background:var(--soft2);
+  color:var(--text);
+  border-color:var(--line);
+}
+html[data-theme="dark"] .po-warning-note {
+  background:#302419;
+  border-color:#755330;
+  color:#f5d3a7;
+}
+html[data-theme="dark"] .po-send-panel .po-pricing-table-wrap { background:var(--panel); }
+html[data-theme="dark"] .po-action-stack .btn.primary { color:#ffffff; }
+@media(max-width:640px) {
+  .po-generator-modal .field,
+  .po-generator-modal .po-input-wrap,
+  .po-generator-modal .po-pricing-totals { min-width:0; max-width:100%; }
+  .po-generator-modal .po-send-panel .field input,
+  .po-generator-modal .po-send-panel .field textarea { width:100%; min-width:0; }
+  .po-generator-modal .po-action-stack { width:100%; }
+  .po-generator-modal .po-action-stack .btn {
+    width:100%;
+    justify-content:center;
+    white-space:normal;
+    text-align:center;
+  }
+}
