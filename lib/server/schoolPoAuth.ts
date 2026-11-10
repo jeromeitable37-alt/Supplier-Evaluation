@@ -83,7 +83,9 @@ export async function requirePoDriveAdmin(request: Request): Promise<{ uid: stri
   return { uid: user.localId, email: authEmail };
 }
 
-export async function schoolPoWebhook(action: "upload_po" | "get_po_file", details: Record<string, unknown>) {
+export async function schoolPoWebhook(action: "upload_po" | "get_po_file" |
+  "check_po_setup" | "upload_po_chunk" | "finish_po_upload" | "get_po_chunk",
+  details: Record<string, unknown>) {
   const url = String(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL || "").trim();
   const secret = String(process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET || "").trim();
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec(?:\?.*)?$/.test(url) ||
@@ -91,6 +93,7 @@ export async function schoolPoWebhook(action: "upload_po" | "get_po_file", detai
   const response = await fetch(url, {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ action, secret, ...details }),
+    signal:AbortSignal.timeout(45000),
   });
   const body = await response.text();
   let result: any = null;
