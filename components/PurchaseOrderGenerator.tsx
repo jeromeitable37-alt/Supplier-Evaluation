@@ -34,6 +34,7 @@ import {
 import { readPrivatePoChunks } from "../lib/privatePoReader";
 import { auth } from "../lib/firebase";
 import { neonEnabled, neonWrite } from "../lib/neonClient";
+import { cloudinaryConfigured, getCloudinarySetupMessage, uploadPoDocumentToCloudinary } from "../lib/cloudinary";
 
 export type PurchaseOrderSheetMatch = {
   poNumber: string;
@@ -239,7 +240,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const [uploading, setUploading] = useState(false);
   const [poExtracting, setPoExtracting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [schoolDriveEnabled, setSchoolDriveEnabled] = useState(false);
+  const [schoolDriveEnabled, setSchoolDriveEnabled] = useState(() => !neonEnabled() && cloudinaryConfigured());
   const [schoolEmailEnabled, setSchoolEmailEnabled] = useState(false);
   const [schoolDriveMessage, setSchoolDriveMessage] = useState("");
   const [schoolDriveChecking, setSchoolDriveChecking] = useState(false);
@@ -333,6 +334,14 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
 
   async function checkSchoolDrive(){
+    if(!neonEnabled()){
+      const ready=cloudinaryConfigured();
+      setSchoolDriveEnabled(ready);
+      setSchoolDriveMessage(ready
+        ? "Legacy official PO document uploads are available."
+        : getCloudinarySetupMessage());
+      return;
+    }
     setSchoolDriveChecking(true);
     setSchoolDriveMessage("");
     try{
@@ -841,7 +850,147 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     });
   };
 
+  const uploadLegacyPo = async (files: File[]) => {
+    if (!selectedPo) return;
+    const chosen = files.filter(Boolean);
+    if (!chosen.length) return;
+    if (!cloudinaryConfigured()) {
+      onNotify(getCloudinarySetupMessage());
+      return;
+    }
+    const totalBytes = chosen.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > 50 * 1024 * 1024) {
+      onNotify("The selected PO pages are larger than 50 MB total. Please compress the scans or upload fewer pages at once.");
+      return;
+    }
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      const folder = `sisc-purchase-orders/${String(selectedPo.poNumber || selectedPo.id).replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
+      const progress = chosen.map(() => 0);
+      const uploaded = await Promise.all(chosen.map((file, index) => uploadPoDocumentToCloudinary(file, folder, (percent) => {
+        progress[index] = percent;
+        const average = progress.reduce((sum, value) => sum + value, 0) / progress.length;
+        setUploadProgress(Math.round(average));
+      })));
+      const documentPages = uploaded.map((doc, index) => ({
+        url: doc.url, publicId: doc.publicId, resourceType: doc.resourceType, format: doc.format,
+        name: doc.originalFilename || chosen[index].name, mimeType: chosen[index].type || undefined,
+        size: doc.bytes || chosen[index].size, pages: doc.pages,
+      }));
+
+      // Read visible PO details from the uploaded official document itself.
+      // PDFs are processed as PDFs; multiple image pages are processed one-by-one.
+      let extracted: any = null;
+      const extractionFiles = chosen.filter((file) =>
+        /^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || "") || file.type === "application/pdf",
+      );
+      if (extractionFiles.length) {
+        setPoExtracting(true);
+        try {
+          const merged: any = { items: [] };
+          const seenItems = new Set<string>();
+          for (const sourceFile of extractionFiles.slice(0, 6)) {
+            try {
+              const documentData = await fileToDataUrl(sourceFile);
+              const response = await fetch("/api/gemini-po-extract", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image: documentData }),
+              });
+              const data = await response.json();
+              if (!response.ok || !data?.ok || !data?.data) continue;
+              const current = data.data;
+              for (const key of [
+                "poNumber", "supplier", "attention", "vendorPhone", "vendorEmail", "vendorAddress", "vendorCity",
+                "deliveryAddress", "orderDate", "expectedDate", "actualDeliveryDate", "paymentTerms", "prfNumber",
+                "requisitioner", "purpose", "buyerName", "receivedBy", "status", "subtotal", "discountPct", "discountAmt", "total", "notes",
+              ]) {
+                if (!merged[key] && current[key] !== undefined && current[key] !== null && String(current[key]).trim()) merged[key] = current[key];
+              }
+              if (Array.isArray(current.items)) {
+                for (const item of current.items) {
+                  const key = [item.description, item.qty, item.unit, item.unitPrice, item.lineTotal].map((v) => String(v || "").trim().toLowerCase()).join("|");
+                  if (!key.replace(/\|/g, "") || seenItems.has(key)) continue;
+                  seenItems.add(key);
+                  merged.items.push(item);
+                }
+              }
+            } catch (sourceError) {
+              console.warn("PO detail extraction failed for source file:", sourceError);
+            }
+          }
+          extracted = merged.items.length || Object.keys(merged).length > 1 ? merged : null;
+        } finally {
+          setPoExtracting(false);
+        }
+      }
+
+      const extractedItems: PurchaseOrderLine[] = Array.isArray(extracted?.items)
+        ? extracted.items.map((item: any, index: number) => {
+            const qty = item.qty ?? "";
+            const unitPrice = item.unitPrice ?? "";
+            const discount = item.itemDiscountPct ?? 0;
+            const lineTotal = item.lineTotal ?? (amount(qty) * amount(unitPrice) * Math.max(0, 1 - amount(discount) / 100));
+            return { line: index + 1, description: String(item.description || ""), unit: String(item.unit || "pcs"), qty, unitPrice, itemDiscountPct: discount, lineTotal };
+          }).filter((item: PurchaseOrderLine) => item.description || amount(item.qty) || amount(item.unitPrice) || amount(item.lineTotal))
+        : [];
+      const extractedSubtotal = amount(extracted?.subtotal) || extractedItems.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice), 0);
+      const extractedTotal = amount(extracted?.total) || extractedItems.reduce((sum, item) => sum + amount(item.lineTotal), 0);
+
+      const baseUpdated = {
+        ...selectedPo, documentProvider: "cloudinary" as const, documentPages, documentUrl: documentPages[0].url,
+        documentName: documentPages.length === 1 ? documentPages[0].name : `${selectedPo.poNumber} · ${documentPages.length} pages`,
+        documentMimeType: documentPages[0].mimeType || `application/${documentPages[0].format || "octet-stream"}`,
+        documentSize: documentPages.reduce((sum, doc) => sum + Number(doc.size || 0), 0),
+        documentUploadedAt: new Date().toISOString(), documentUploadedBy: currentUser?.email || "",
+        documentSource: "cloudinary-official-po", documentPath: documentPages[0].publicId,
+      } as PurchaseOrder;
+
+      const hasExistingPrice = baseUpdated.items?.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0);
+      const enriched: PurchaseOrder = {
+        ...baseUpdated,
+        poNumber: baseUpdated.poNumber || String(extracted?.poNumber || "").trim(),
+        vendorName: baseUpdated.vendorName || String(extracted?.supplier || "").trim(),
+        vendorAttention: baseUpdated.vendorAttention || String(extracted?.attention || "").trim(),
+        vendorPhone: baseUpdated.vendorPhone || String(extracted?.vendorPhone || "").trim(),
+        deliveryAddress: baseUpdated.deliveryAddress || String(extracted?.deliveryAddress || "").trim(),
+        orderDate: baseUpdated.orderDate || String(extracted?.orderDate || "").trim(),
+        expectedDate: baseUpdated.expectedDate || String(extracted?.expectedDate || "").trim(),
+        paymentTerms: baseUpdated.paymentTerms || String(extracted?.paymentTerms || "").trim(),
+        prfNumber: baseUpdated.prfNumber || String(extracted?.prfNumber || "").trim(),
+        buyerName: baseUpdated.buyerName || String(extracted?.buyerName || "").trim(),
+        purpose: baseUpdated.purpose || String(extracted?.purpose || "").trim(),
+        notes: baseUpdated.notes || String(extracted?.notes || "").trim(),
+        items: extractedItems.length && !hasExistingPrice ? extractedItems : baseUpdated.items,
+        subtotal: amount(baseUpdated.subtotal) || extractedSubtotal,
+        discountPct: amount(baseUpdated.discountPct) || amount(extracted?.discountPct),
+        discountAmt: amount(baseUpdated.discountAmt) || amount(extracted?.discountAmt),
+        total: amount(baseUpdated.total) || extractedTotal,
+        actualDeliveryDate: baseUpdated.actualDeliveryDate || String(extracted?.actualDeliveryDate || "").trim(),
+        receivedBy: baseUpdated.receivedBy || String(extracted?.receivedBy || "").trim(),
+        status: baseUpdated.status || String(extracted?.status || "").trim() || "Pending",
+        deliveryLeadTimeDays: baseUpdated.deliveryLeadTimeDays ?? calculateDeliveryLeadTime(baseUpdated.orderDate, baseUpdated.actualDeliveryDate || String(extracted?.actualDeliveryDate || "").trim()) ?? undefined,
+        pricingSource: (extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0)
+          ? ((hasExistingPrice || amount(baseUpdated.total) > 0) ? "mixed" : "uploaded-po")
+          : (baseUpdated.pricingSource || (hasExistingPrice ? "spreadsheet" : undefined)),
+      };
+
+      setSelectedPo(enriched);
+      await savePurchaseOrderCloud(enriched);
+      await syncPendingEvaluationLinks(enriched);
+      const priceFound = extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0;
+      onNotify(`Official PO ${enriched.poNumber || "record"} stored in Cloudinary${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "Could not store the PO document.");
+    } finally {
+      setUploading(false); setPoExtracting(false); setUploadProgress(0);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const uploadOfficialPo = async (files: File[]) => {
+    if(!neonEnabled())return uploadLegacyPo(files);
     if (!selectedPo) return;
     const chosen = files.filter(Boolean);
     if (!chosen.length) return;
@@ -1423,10 +1572,14 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         <p style={{fontSize:12,opacity:.8,margin:"6px 0 0"}}>
           {schoolDriveEnabled
             ? "PO documents are available to authorized Purchasing staff."
-            : "Document uploads require administrator access. Use Check document access to verify availability."}
+            : neonEnabled()
+              ? "Document uploads require administrator access. Use Check document access to verify availability."
+              : "The existing PO upload service needs configuration. Check document access."}
         </p>
         {!schoolEmailEnabled && <p style={{color:"#92400e",fontSize:12,marginTop:5}}>
-          Official bulk email delivery is paused in Preview. One approved Purchasing evaluation email test is available to Sir JC for PO 32187.
+          {neonEnabled()
+            ? "Official bulk email delivery is paused in Preview. One approved Purchasing evaluation email test is available to Sir JC for PO 32187."
+            : "Email delivery is unavailable until the school email integration is configured."}
         </p>}
       </div>
       <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Record sync needs attention" : fetchedAt ? "Records up to date" : "Loading records…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading purchase order and request details")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
