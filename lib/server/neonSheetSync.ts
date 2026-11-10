@@ -21,8 +21,12 @@ const asObject=(value:unknown):Record<string,unknown> =>
     ? value as Record<string,unknown>:{};
 
 export function neonSchoolDeliveryEnabled():boolean {
-  return process.env.NEXT_PUBLIC_DATA_BACKEND==="neon" &&
-    process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED==="true";
+  if(process.env.NEXT_PUBLIC_DATA_BACKEND!=="neon")return false;
+  // Real school records may sync only on the authorized Production deployment.
+  // Preview remains isolated unless an approved testing destination is enabled.
+  return process.env.VERCEL_ENV==="production" ||
+    (process.env.VERCEL_ENV==="preview" &&
+      process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED==="true");
 }
 
 export async function syncNeonEvaluationToSheet(token:string):Promise<NeonSheetSyncResult> {
