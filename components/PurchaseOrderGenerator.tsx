@@ -249,7 +249,10 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     setLoading(true);
     setLiveError("");
     try {
-      const response = await fetch("/api/po-lookup", { cache: "no-store" });
+      const token=neonEnabled()?await auth?.currentUser?.getIdToken():null;
+      const response = await fetch("/api/po-lookup", {
+        cache:"no-store",headers:token?{Authorization:"Bearer "+token}:{},
+      });
       const data = await response.json();
       if (!response.ok || !data?.ok) throw new Error(data?.message || "Google Sheet is unavailable.");
       setPoRecords(Array.isArray(data.poRecords) ? data.poRecords : []);
