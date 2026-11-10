@@ -135,7 +135,19 @@ export default function EvaluationPage() {
   if (error || !link) return <div className="public-eval-shell"><div className="public-eval-card center"><XCircle size={46}/><h1>Evaluation unavailable</h1><p>{error || "This evaluation link is not available."}</p></div></div>;
 
   const po = link.po;
-  const officialDocument = po.documentUrl || "";
+  const isPrivateDrivePo=po.documentProvider==="google-drive";
+  const privateFileUrl=(fileId?:string)=>{
+    if(!fileId||!token)return "";
+    return "/api/public-po-file?token="+encodeURIComponent(token)+"&fileId="+encodeURIComponent(fileId);
+  };
+  const officialDocument=isPrivateDrivePo
+    ? privateFileUrl(po.documentFileId||po.documentPages?.[0]?.fileId)
+    : po.documentUrl||"";
+  const displayedPages=(po.documentPages?.length
+    ? po.documentPages
+    : [{url:po.documentUrl||"",fileId:po.documentFileId,
+        name:po.documentName||`PO-${po.poNumber}`,mimeType:po.documentMimeType}])
+    .map(page=>({...page,url:isPrivateDrivePo?privateFileUrl(page.fileId||po.documentFileId):page.url}));
   const leadTimeDays = po.deliveryLeadTimeDays ?? calculateLeadTimeDays(po.orderDate, po.actualDeliveryDate);
   const itemAmounts = (po.items || []).map((item) => {
     const qty = parseAmount(item.qty);
@@ -182,7 +194,7 @@ export default function EvaluationPage() {
       <div className="public-po-paper-head"><b>{officialDocument ? "Official Purchase Order" : "Generated Purchase Order"}</b><span>{officialDocument ? "Stored transaction document" : "System template preview"}</span></div>
       {officialDocument ? <>
         <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The official PO stored by the Purchasing Office is shown here. Multiple PDF pages or uploaded page images are supported.</small></div><a href={officialDocument} target="_blank" rel="noreferrer">Open</a></div>
-        {(po.documentPages?.length ? po.documentPages : [{ url: officialDocument, name: po.documentName || `PO-${po.poNumber}`, mimeType: po.documentMimeType }]).map((doc, index) => <div className="public-official-page" key={`${doc.url}-${index}`}><div className="public-official-page-label">PAGE {index + 1}{po.documentPages?.length ? ` OF ${po.documentPages.length}` : ""}</div>{isImage(doc.mimeType) ? <img src={doc.url} alt={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-official-image"/> : <iframe title={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-po-frame" src={doc.url}/>}</div>)}
+        {displayedPages.filter(doc=>doc.url).map((doc, index) => <div className="public-official-page" key={`${doc.url}-${index}`}><div className="public-official-page-label">PAGE {index + 1}{po.documentPages?.length ? ` OF ${po.documentPages.length}` : ""}</div>{isImage(doc.mimeType) ? <img src={doc.url} alt={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-official-image"/> : <iframe title={`Official purchase order ${po.poNumber} page ${index + 1}`} className="public-po-frame" src={doc.url}/>}</div>)}
       </> : <div className="public-generated-warning"><b>Official PO not attached yet</b><span>The purchasing office must store the official PO before this evaluation link is sent.</span></div>}
       <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: {displayTotal > 0 ? `Php ${displayTotal.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</b></div>
     </section>
