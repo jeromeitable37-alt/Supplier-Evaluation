@@ -4,6 +4,8 @@
 Deploy the improved ISO Supplier Evaluation system with separate Purchasing, Requisitioner, and AMD links, official PO attachments, automated results, school Sheet syncing, and weekday-independent daily 9:00 AM Asia/Manila reminders.
 
 ## Verified
+- Production Neon sync table added on 2026-11-10: `se_sheet_sync` with retry index and FK; no school records were inserted, updated, or deleted. This prepares the eventual cutover but does NOT enable Sheet writes.
+- Vercel Production `CRON_SECRET` verified configured as sensitive; reminder execution still blocked on missing Production data-source credentials and code release.
 - Vercel **Preview** build compiles and deploys successfully.
 - Sir JC's one-recipient Gmail test and Purchasing evaluation-link email arrived (user-verified).
 - Preview Neon contains historical records, but is **not** the live Firestore source of truth.
