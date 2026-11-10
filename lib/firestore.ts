@@ -416,6 +416,7 @@ export type PurchaseOrderLine = {
 
 export type PurchaseOrderDocument = {
   url: string;
+  fileId?: string;
   publicId?: string;
   resourceType?: string;
   format?: string;
@@ -467,7 +468,8 @@ export type PurchaseOrder = {
   documentUploadedAt?: string;
   documentUploadedBy?: string;
   documentSource?: string;
-  documentProvider?: "cloudinary" | "firebase";
+  documentProvider?: "cloudinary" | "firebase" | "google-drive";
+  documentFileId?: string;
   documentPages?: PurchaseOrderDocument[];
 };
 
