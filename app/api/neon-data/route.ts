@@ -244,28 +244,68 @@ export async function POST(request: Request) {
       requirePermission(session,"create_evaluations");
       const input=jsonPayload(data);
       const po=object(input.po);
-      const token=randomBytes(20).toString("hex");
+      const poNumber=s(po.poNumber).trim(),prfNumber=s(po.prfNumber).trim();
+      if(!poNumber&&!prfNumber)throw new AppAccessError("A PO or PRF number is required.",400);
       const role=["purchaser","amd_personnel","requisitioner"].includes(s(input.evaluatorRole))
         ? s(input.evaluatorRole):"requisitioner";
       const evaluatorName=s(input.evaluatorName)||
         (role==="purchaser"?s(po.buyerName):role==="amd_personnel"?s(po.receivedBy):s(input.requisitionerName)||s(po.requisitioner))||
         "Evaluator";
-      const evaluatorEmail=s(input.evaluatorEmail)||
-        (role==="purchaser"?s(po.buyerEmail):role==="amd_personnel"?s(input.amdEmail):s(input.requisitionerEmail));
-      const link={
-        token,status:"pending",po,workspaceName:s(input.workspaceName)||"Southville International School and Colleges",
-        requisitionerName:s(input.requisitionerName)||s(po.requisitioner)||"Requisitioner",
-        requisitionerEmail:s(input.requisitionerEmail)||s(po.requisitionerEmail),
-        evaluatorRole:role,evaluatorName,evaluatorEmail,
-        amdName:s(input.amdName)||s(po.receivedBy),
-        amdEmail:s(input.amdEmail),buyerName:s(po.buyerName),buyerEmail:s(po.buyerEmail),
-        createdAt:new Date().toISOString(),createdBy:session.email,evaluationId:"public-"+token,
-      };
-      await db.query(
-        "INSERT INTO se_evaluation_links (token,link_status,evaluator_role,po_number,payload) VALUES($1,'pending',$2,$3,$4::jsonb)",
-        [token,role,s(po.poNumber),JSON.stringify(link)],
-      );
-      result=link;
+      const evaluatorEmail=(s(input.evaluatorEmail)||
+        (role==="purchaser"?s(po.buyerEmail):role==="amd_personnel"?s(input.amdEmail):s(input.requisitionerEmail))).trim().toLowerCase();
+      if(!/^[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]+$/.test(evaluatorEmail)){
+        throw new AppAccessError("A verified evaluator email is required before creating a link.",400);
+      }
+      const workKey=[poNumber.toLowerCase(),prfNumber.toLowerCase(),role].join("|");
+      // This lock serializes simultaneous requests for the same PO/PRF + role
+      // without changing any historical Firestore snapshot or table schema.
+      result=await transaction(db,async(client)=>{
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[workKey]);
+        const existing=await client.query(
+          "SELECT payload,link_status FROM se_evaluation_links "+
+          "WHERE evaluator_role=$1 "+
+          "AND lower(btrim(COALESCE(payload->'po'->>'poNumber','')))=$2 "+
+          "AND lower(btrim(COALESCE(payload->'po'->>'prfNumber','')))=$3 "+
+          "ORDER BY CASE WHEN link_status='pending' THEN 0 ELSE 1 END, imported_at DESC LIMIT 1 FOR UPDATE",
+          [role,poNumber.toLowerCase(),prfNumber.toLowerCase()],
+        );
+        const found=existing.rows[0] as
+          {payload:Record<string,unknown>;link_status:string}|undefined;
+        if(found){
+          if(found.link_status!=="pending")throw new AppAccessError(
+            "This evaluator role already submitted for this PO/PRF.",409);
+          if(s(found.payload.evaluatorEmail).trim().toLowerCase()!==evaluatorEmail){
+            throw new AppAccessError(
+              "An active evaluation link exists for a different recipient. Review the existing link before sending.",409);
+          }
+          const expiry=s(found.payload.expiresAt);
+          if(expiry&&Date.parse(expiry)<=Date.now()){
+            throw new AppAccessError(
+              "The earlier evaluation link expired. Ask an administrator to review it before reissuing.",409);
+          }
+          return {...found.payload,reused:true};
+        }
+        const token=randomBytes(20).toString("hex");
+        const now=new Date();
+        const days=Number(process.env.EVALUATION_LINK_TTL_DAYS||"30");
+        const ttlDays=Number.isInteger(days)&&days>=1&&days<=90?days:30;
+        const link={
+          token,status:"pending",po,workspaceName:s(input.workspaceName)||"Southville International School and Colleges",
+          requisitionerName:s(input.requisitionerName)||s(po.requisitioner)||"Requisitioner",
+          requisitionerEmail:s(input.requisitionerEmail)||s(po.requisitionerEmail),
+          evaluatorRole:role,evaluatorName,evaluatorEmail,
+          amdName:s(input.amdName)||s(po.receivedBy),
+          amdEmail:s(input.amdEmail),buyerName:s(po.buyerName),buyerEmail:s(po.buyerEmail),
+          createdAt:now.toISOString(),expiresAt:new Date(now.getTime()+ttlDays*86400000).toISOString(),
+          createdBy:session.email,evaluationId:"public-"+token,
+        };
+        await client.query(
+          "INSERT INTO se_evaluation_links (token,link_status,evaluator_role,po_number,payload) "+
+          "VALUES($1,'pending',$2,$3,$4::jsonb)",
+          [token,role,poNumber,JSON.stringify(link)],
+        );
+        return link;
+      });
     } else if (action==="updateLinkPo" || action==="markEmail") {
       if(action==="updateLinkPo") requirePermission(session,"edit_evaluations");
       else requirePermission(session,"create_evaluations");
@@ -273,15 +313,12 @@ export async function POST(request: Request) {
       if(action==="updateLinkPo") {
         await upsertLink(db,token,{po:jsonPayload(data)});
       } else {
+        // The email-sending API records real provider acceptance after it
+        // completes. A browser cannot claim that a message was successfully
+        // delivered, nor bypass the anti-spam cooldown.
         const current=await findPayload(db,"evaluationLinks",token);
-        if(!current) throw new AppAccessError("Link not found.",404);
-        if(current.status==="pending"){
-          const timestamp=new Date().toISOString();
-          await upsertLink(db,token,{
-            emailSentAt:current.emailSentAt||timestamp,lastEmailSentAt:timestamp,
-            lastEmailRecipient:s(body.recipient).trim().toLowerCase(),emailSendStatus:"sent",
-          });
-        }
+        if(!current)throw new AppAccessError("Link not found.",404);
+        result={trackedByServer:true};
       }
     } else if(action==="upsertContact"){
       if(!hasPermission(session,"create_evaluations")&&!hasPermission(session,"edit_evaluations")) requirePermission(session,"create_evaluations");
