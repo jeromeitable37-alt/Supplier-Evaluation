@@ -22,7 +22,10 @@ function doGet(e) {
 function doPost(e) {
   try {
     var body = (e && e.postData && e.postData.contents) || '';
-    if (!body || body.length > 100000) throw new Error('Invalid request.');
+    // File chunks are capped to 1 MiB binary (~1.4 MiB base64). The old
+    // 100 KB cap incorrectly rejected every useful PO document upload.
+    // Reject larger requests before JSON parsing or interacting with Drive.
+    if (!body || body.length > 2000000) throw new Error('Invalid or oversized request.');
     var request = JSON.parse(body);
     if (!request || typeof request !== 'object' || Array.isArray(request)) {
       throw new Error('Invalid request body.');
@@ -43,6 +46,18 @@ function doPost(e) {
       // The existing shared secret has already been verified above.
       // This read-only action is restricted to approved school tab names.
       return siscWebhookJson_(siscPrivateSheetRead_(request, props));
+    }
+    if (action === 'check_po_setup') {
+      return siscWebhookJson_(siscDriveWebhookHealth_());
+    }
+    if (action === 'upload_po_chunk') {
+      return siscWebhookJson_(siscDriveUploadChunk_(request));
+    }
+    if (action === 'finish_po_upload') {
+      return siscWebhookJson_(siscDriveFinishChunkUpload_(request));
+    }
+    if (action === 'get_po_chunk') {
+      return siscWebhookJson_(siscDriveGetPoChunk_(request));
     }
     if (action === 'upload_po') {
       return siscWebhookJson_(siscDriveUploadPo_(request));
