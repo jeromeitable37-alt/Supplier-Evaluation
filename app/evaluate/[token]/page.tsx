@@ -120,7 +120,7 @@ export default function EvaluationPage() {
         // has been committed. A separate browser webhook call is not needed.
         const state="sheetSync" in submission ? submission.sheetSync : undefined;
         if(state!=="synced"&&state!=="already_synced"){
-          setSyncWarning("Your evaluation is safely saved. Official Google Sheet delivery is queued for an authorized retry.");
+          setSyncWarning("Your evaluation has been saved. The Purchasing Office will complete official processing after review.");
         }else{
           setSyncWarning("");
         }
@@ -131,9 +131,9 @@ export default function EvaluationPage() {
             method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({token}),
           });
-          if(!response.ok)setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+          if(!response.ok)setSyncWarning("Your evaluation has been saved. The Purchasing Office will verify the final processing status.");
         }catch{
-          setSyncWarning("Your response is saved. The office still needs to verify Google Sheet synchronization.");
+          setSyncWarning("Your evaluation has been saved. The Purchasing Office will verify the final processing status.");
         }
       }
     } catch (e) {
@@ -171,16 +171,16 @@ export default function EvaluationPage() {
   const displayTotal = parseAmount(po.total) || computedItemTotal || parseAmount(po.subtotal) || 0;
   return <div className="public-eval-shell"><div className="public-eval-wrap">
     {neonEnabled() && <div role="status" style={{ padding: "12px 16px", marginBottom: 16, borderRadius: 9, border: "1px solid #e0b45e", background: "#fff5dd", color: "#624514", fontWeight: 600, fontSize: 13 }}>
-      NEON MIGRATION PREVIEW — Test submissions here are saved to the preview database only. This is not the official live evaluation form.
+      TEST VERSION — Responses submitted here are for testing only and are not official evaluations.
     </div>}
-    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>{evaluatorLabel} confirmation and supplier feedback</p></div></section>
-    <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>Php {parseAmount(displayTotal).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
+    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>{evaluatorLabel} · Supplier performance review</p></div></section>
+    <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>{displayTotal > 0 ? moneyText(displayTotal) : "—"}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
     <section className="public-delivery-strip"><div><span>Expected delivery</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Actual delivery</span><strong>{po.actualDeliveryDate || "—"}</strong></div><div><span>Delivery lead time</span><strong>{leadTimeDays !== null ? `${leadTimeDays} day${leadTimeDays === 1 ? "" : "s"}` : "—"}</strong></div><div><span>PO status</span><strong>{po.status || "Pending"}</strong></div><div><span>Received by</span><strong>{po.receivedBy || "—"}</strong></div></section>
 
     <section className="public-po-pricing" style={{ background: "#ffffff", border: "1px solid #dfe9e6", borderRadius: 14, marginBottom: 18, overflow: "hidden", boxShadow: "0 3px 14px rgba(15, 23, 42, 0.04)" }}>
       <div style={{ padding: "15px 18px", borderBottom: "1px solid #e8efed", display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div><b style={{ display: "block", fontSize: 14, lineHeight: 1.25, color: "#0f172a" }}>Purchase Details &amp; Pricing</b><small style={{ display: "block", marginTop: 4, color: "#64748b", fontSize: 11, lineHeight: 1.45 }}>Transaction values attached to this evaluator link.</small></div>
-        <div style={{ textAlign: "right" }}><strong style={{ display: "block", color: "#0f766e", fontSize: 16, lineHeight: 1.2, whiteSpace: "nowrap" }}>{displayTotal > 0 ? moneyText(displayTotal) : "Price not recorded"}</strong><small style={{ display: "block", marginTop: 4, color: "#94a3b8", fontSize: 10 }}>{po.pricingSource === "uploaded-po" ? "Read from uploaded PO" : po.pricingSource === "mixed" ? "Spreadsheet + uploaded PO" : po.pricingSource === "spreadsheet" ? "From supplier spreadsheet" : displayTotal > 0 ? "Saved transaction value" : "Waiting for PO pricing"}</small></div>
+        <div><b style={{ display: "block", fontSize: 14, lineHeight: 1.25, color: "#0f172a" }}>Purchase Details and Pricing</b><small style={{ display: "block", marginTop: 4, color: "#64748b", fontSize: 11, lineHeight: 1.45 }}>Review the purchase information before rating the supplier.</small></div>
+        <div style={{ textAlign: "right" }}><strong style={{ display: "block", color: "#0f766e", fontSize: 16, lineHeight: 1.2, whiteSpace: "nowrap" }}>{displayTotal > 0 ? moneyText(displayTotal) : "Price not recorded"}</strong><small style={{ display: "block", marginTop: 4, color: "#94a3b8", fontSize: 10 }}>{displayTotal > 0 ? "Recorded purchase amount" : "Amount pending confirmation"}</small></div>
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -203,9 +203,9 @@ export default function EvaluationPage() {
     </section>
 
     <section className="public-po-paper">
-      <div className="public-po-paper-head"><b>{officialDocument ? "Official Purchase Order" : "Generated Purchase Order"}</b><span>{officialDocument ? "Stored transaction document" : "System template preview"}</span></div>
+      <div className="public-po-paper-head"><b>{officialDocument ? "Official Purchase Order" : "Generated Purchase Order"}</b><span>{officialDocument ? "For evaluator reference" : "Document not available"}</span></div>
       {officialDocument ? <>
-        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>The official PO stored by the Purchasing Office is shown here. Multiple PDF pages or uploaded page images are supported.</small></div>{isPrivateDrivePo?<small>Protected school Drive · view below</small>:<a href={officialDocument} target="_blank" rel="noreferrer">Open</a>}</div>
+        <div className="public-official-doc-head"><span>{isImage(po.documentMimeType) ? <FileImage size={15}/> : <FileText size={15}/>}</span><div><b>{po.documentName || `PO-${po.poNumber}`}</b><small>Review the official purchase order provided by the Purchasing Office.</small></div>{isPrivateDrivePo?<small>View document below</small>:<a href={officialDocument} target="_blank" rel="noreferrer">Open</a>}</div>
         {isPrivateDrivePo?
           displayedPages.filter(doc=>doc.fileId).map((doc,index)=>
             <PrivatePoAttachment key={doc.fileId||index} token={token}
@@ -220,12 +220,12 @@ export default function EvaluationPage() {
                 <iframe title={`Official purchase order ${po.poNumber} page ${index+1}`}
                   className="public-po-frame" src={doc.url}/>}
             </div>)}
-      </> : <div className="public-generated-warning"><b>Official PO not attached yet</b><span>The purchasing office must store the official PO before this evaluation link is sent.</span></div>}
+      </> : <div className="public-generated-warning"><b>Official PO not attached yet</b><span>Please contact the Purchasing Office if you need to review the purchase order.</span></div>}
       <div className="public-po-footer"><span>Purpose: {po.purpose || "—"}</span><b>Total: {displayTotal > 0 ? `Php ${displayTotal.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</b></div>
     </section>
 
     {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p>
-    {syncWarning && <p style={{ color: "#9a3412", fontSize: 12 }}>{syncWarning}</p>}</section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>PLEASE RATE THE DELIVERED PURCHASE</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} supplier evaluation</h2><p>Please rate each criterion from 1 (Poor) to 5 (Excellent). Your responses are saved with this purchase transaction under your evaluator role.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}
+    {syncWarning && <p style={{ color: "#9a3412", fontSize: 12 }}>{syncWarning}</p>}</section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>SUPPLIER PERFORMANCE REVIEW</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} Evaluation</h2><p>Rate each criterion from 1 (Poor) to 5 (Excellent). Check the purchase information above before submitting.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}
         {scores[id] > 0 && scores[id] < 4 && <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#334155" }}>
           Reason for rating below 4 (required)
           <textarea style={{ width: "100%", marginTop: 6, minHeight: 70, border: "1px solid #cbd5e1", borderRadius: 8, padding: 10 }}
@@ -236,12 +236,12 @@ export default function EvaluationPage() {
       </div>)}</section>
       {evaluatorRole === "requisitioner" && <section className="public-eval-criteria" style={{ marginTop: 22 }}>
         <div className="public-criterion">
-          <div><h2 style={{ fontSize: 19, margin: "0 0 8px" }}>Customer Satisfaction — Purchasing Services</h2>
-            <p>This separate section rates the Purchasing Office, NOT the supplier. Your name is recorded for reference; the official printout retains signature lines for signing.</p></div>
+          <div><h2 style={{ fontSize: 19, margin: "0 0 8px" }}>Customer Satisfaction: Purchasing Services</h2>
+            <p>This section evaluates the Purchasing Office's service, not the supplier. Your responses will be recorded separately.</p></div>
         </div>
         {([["timeliness", "Timeliness of Purchasing service"], ["accuracy", "Accuracy of Purchasing service"]] as const).map(([key, label]) =>
           <div className="public-criterion" key={key}>
-            <div><h3>{label}</h3><p>Please rate 1 (Poor) to 5 (Highest).</p></div>
+            <div><h3>{label}</h3><p>Rate from 1 (Poor) to 5 (Excellent).</p></div>
             <div className="public-stars">{[1,2,3,4,5].map((n) =>
               <button type="button" key={n} className={satisfaction[key] >= n ? "active" : ""}
                 onClick={() => setSatisfaction((previous) => ({ ...previous, [key]: n }))}
