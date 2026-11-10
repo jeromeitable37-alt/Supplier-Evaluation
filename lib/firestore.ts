@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { auth, db, storage } from "./firebase";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { neonEnabled, neonRead, neonWrite, neonWatch, neonPublicGet, neonPublicSubmit } from "./neonClient";
 
 export const EVALUATIONS = "evaluations";
 export const PURCHASE_ORDERS = "purchaseOrders";
@@ -109,6 +110,7 @@ export function subscribeEvaluations(
   callback: (items: Record<string, unknown>[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
+  if (neonEnabled()) return neonWatch<Record<string, unknown>>("evaluations", callback, onError);
   const firestore = requireDb();
   const q = query(collection(firestore, EVALUATIONS));
   return onSnapshot(
@@ -121,18 +123,21 @@ export function subscribeEvaluations(
 }
 
 export async function saveEvaluationCloud(item: Record<string, unknown>) {
+  if (neonEnabled()) { await neonWrite("saveEvaluation", {data:item}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   await setDoc(doc(firestore, EVALUATIONS, String(item.id)), item, { merge: true });
 }
 
 export async function deleteEvaluationCloud(id: string) {
+  if (neonEnabled()) { await neonWrite("deleteEvaluation", {id}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   await deleteDoc(doc(firestore, EVALUATIONS, id));
 }
 
 export async function clearEvaluationsCloud(ids: string[]) {
+  if (neonEnabled()) { await neonWrite("clearEvaluations", {ids}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   for (let i = 0; i < ids.length; i += 400) {
@@ -144,6 +149,10 @@ export async function clearEvaluationsCloud(ids: string[]) {
 }
 
 export async function saveManyCloud(items: Record<string, unknown>[]) {
+  if (neonEnabled()) {
+    for (let i = 0; i < items.length; i += 400) await neonWrite("saveMany", {items:items.slice(i,i+400)});
+    return;
+  }
   const firestore = requireDb();
   await signInToFirebase();
   for (let i = 0; i < items.length; i += 400) {
@@ -156,6 +165,7 @@ export async function saveManyCloud(items: Record<string, unknown>[]) {
 }
 
 export async function getWorkspaceSettings() {
+  if (neonEnabled()) return neonRead<Record<string, unknown> | null>("settings");
   const firestore = requireDb();
   await signInToFirebase();
   const rows = await getDocs(collection(firestore, SETTINGS));
@@ -164,18 +174,22 @@ export async function getWorkspaceSettings() {
 }
 
 export async function saveWorkspaceSettings(settings: Record<string, unknown>) {
+  if (neonEnabled()) { await neonWrite("saveSettings", {data:settings}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   await setDoc(doc(firestore, SETTINGS, "profile"), settings, { merge: true });
 }
 
 export async function clearWorkspaceSettings() {
+  if (neonEnabled()) { await neonWrite("clearSettings"); return; }
   const firestore = requireDb();
   await signInToFirebase();
   await deleteDoc(doc(firestore, SETTINGS, "profile"));
 }
 
 export async function ensureSeedData() {
+  // The verified 1,430-record import already includes the historical Excel seed.
+  if (neonEnabled()) return false;
   const firestore = requireDb();
   await signInToFirebase();
   const metaRef = doc(firestore, "workspace", "seed");
@@ -256,6 +270,11 @@ function normalizeProfile(user: any, data?: Partial<UserProfile>): UserProfile {
 }
 
 export async function getUserProfile(uid?: string) {
+  if (neonEnabled()) {
+    const user=await signInToFirebase();
+    const record=await neonRead<Partial<UserProfile> | null>("profile", {id:uid||user.uid});
+    return record?normalizeProfile(user,record):null;
+  }
   const firestore = requireDb();
   const user = await signInToFirebase();
   const id = uid || user.uid;
@@ -265,6 +284,22 @@ export async function getUserProfile(uid?: string) {
 }
 
 export async function ensureUserProfile(): Promise<UserProfile> {
+  if (neonEnabled()) {
+    const user=await signInToFirebase();
+    try {
+      const record=await neonRead<Partial<UserProfile> | null>("profile");
+      if(!record)throw new Error("Your Purchasing account needs administrator approval before using Neon.");
+      return normalizeProfile(user,record);
+    }catch(error) {
+      const message=error instanceof Error?error.message:"";
+      if(!message.includes("not yet approved")&&!message.includes("needs administrator approval"))throw error;
+      // Verified Firebase users can request a pending profile, but never self-grant permissions.
+      await fetch("/api/neon-enroll",{
+        method:"POST",cache:"no-store",headers:{Authorization:"Bearer "+await user.getIdToken()},
+      });
+      throw new Error("Your account is pending Purchasing administrator approval for the Neon system.");
+    }
+  }
   const firestore = requireDb();
   const user = await signInToFirebase();
   const ref = doc(firestore, USERS, user.uid);
@@ -290,6 +325,7 @@ export async function ensureUserProfile(): Promise<UserProfile> {
 }
 
 export async function saveUserProfile(profile: Partial<UserProfile> & { uid: string }) {
+  if (neonEnabled()) { await neonWrite("saveProfile", {data:profile}); return; }
   const firestore = requireDb();
   const current = await signInToFirebase();
   if (profile.uid !== current.uid) throw new Error("You can only update your own profile from this screen.");
@@ -316,6 +352,7 @@ export async function saveUserProfile(profile: Partial<UserProfile> & { uid: str
 }
 
 export function subscribeUserProfiles(callback: (items: UserProfile[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  if (neonEnabled()) return neonWatch<UserProfile>("users", callback, onError);
   const firestore = requireDb();
   return onSnapshot(
     query(collection(firestore, USERS)),
@@ -349,6 +386,7 @@ export function subscribeUserProfiles(callback: (items: UserProfile[]) => void, 
 }
 
 export async function updateManagedUser(profile: UserProfile) {
+  if (neonEnabled()) { await neonWrite("manageUser", {data:profile}); return; }
   const firestore = requireDb();
   const current = await signInToFirebase();
   if (!current.uid) throw new Error("Please sign in first.");
@@ -378,6 +416,7 @@ export type PurchaseOrderLine = {
 
 export type PurchaseOrderDocument = {
   url: string;
+  fileId?: string;
   publicId?: string;
   resourceType?: string;
   format?: string;
@@ -429,7 +468,8 @@ export type PurchaseOrder = {
   documentUploadedAt?: string;
   documentUploadedBy?: string;
   documentSource?: string;
-  documentProvider?: "cloudinary" | "firebase";
+  documentProvider?: "cloudinary" | "firebase" | "google-drive";
+  documentFileId?: string;
   documentPages?: PurchaseOrderDocument[];
 };
 
@@ -482,6 +522,7 @@ export type PublicEvaluationLink = {
 };
 
 export function subscribePurchaseOrders(callback: (items: PurchaseOrder[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  if (neonEnabled()) return neonWatch<PurchaseOrder>("purchaseOrders", callback, onError);
   const firestore = requireDb();
   return onSnapshot(
     query(collection(firestore, PURCHASE_ORDERS)),
@@ -491,6 +532,7 @@ export function subscribePurchaseOrders(callback: (items: PurchaseOrder[]) => vo
 }
 
 export async function savePurchaseOrderCloud(item: PurchaseOrder) {
+  if (neonEnabled()) { await neonWrite("savePo", {data:removeUndefined(item)}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   const safePurchaseOrder = removeUndefined(item);
@@ -498,6 +540,7 @@ export async function savePurchaseOrderCloud(item: PurchaseOrder) {
 }
 
 export async function getPurchaseOrderCloud(id: string): Promise<PurchaseOrder | null> {
+  if (neonEnabled()) return neonRead<PurchaseOrder|null>("po",{id});
   const firestore = requireDb();
   await signInToFirebase();
   const snap = await getDoc(doc(firestore, PURCHASE_ORDERS, String(id)));
@@ -509,6 +552,23 @@ export async function uploadPurchaseOrderDocumentCloud(input: {
   file: File;
   uploadedBy?: string;
 }) {
+  if (neonEnabled()) {
+    if(!storage)throw new Error("Firebase Storage is not configured.");
+    await signInToFirebase();
+    if(!input.file||input.file.size>12*1024*1024)throw new Error("The PO document must be 12 MB or less.");
+    const safeName=input.file.name.replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-120)||"official-po";
+    const folder=String(input.po.poNumber||input.po.id||"unknown").replace(/[^a-zA-Z0-9._-]+/g,"_");
+    const path="purchase-orders/"+folder+"/"+Date.now()+"-"+safeName;
+    const fileRef=ref(storage,path);
+    await uploadBytes(fileRef,input.file,{contentType:input.file.type||undefined});
+    const url=await getDownloadURL(fileRef);
+    const metadata={documentUrl:url,documentPath:path,documentName:input.file.name,
+      documentMimeType:input.file.type||"application/octet-stream",documentSize:input.file.size,
+      documentUploadedAt:new Date().toISOString(),documentUploadedBy:input.uploadedBy||auth?.currentUser?.email||"",
+      documentSource:"uploaded-official-po",documentProvider:"firebase"};
+    await neonWrite("patchPo",{id:input.po.id,data:metadata});
+    return metadata;
+  }
   const firestore = requireDb();
   if (!storage) throw new Error("Firebase Storage is not configured. Check NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET.");
   await signInToFirebase();
@@ -535,6 +595,7 @@ export async function uploadPurchaseOrderDocumentCloud(input: {
 }
 
 export function subscribePurchaseOrderEvaluations(callback: (items: Record<string, unknown>[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  if (neonEnabled()) return neonWatch<Record<string,unknown>>("evaluations", callback, onError);
   const firestore = requireDb();
   return onSnapshot(
     query(collection(firestore, EVALUATIONS)),
@@ -544,6 +605,7 @@ export function subscribePurchaseOrderEvaluations(callback: (items: Record<strin
 }
 
 export function subscribeEvaluationLinks(callback: (items: PublicEvaluationLink[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  if (neonEnabled()) return neonWatch<PublicEvaluationLink>("evaluationLinks", callback, onError);
   const firestore = requireDb();
   return onSnapshot(
     query(collection(firestore, EVALUATION_LINKS)),
@@ -553,6 +615,7 @@ export function subscribeEvaluationLinks(callback: (items: PublicEvaluationLink[
 }
 
 export async function updateEvaluationLinkPOCloud(token: string, po: PurchaseOrder) {
+  if (neonEnabled()) { await neonWrite("updateLinkPo", {token,data:po}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   await setDoc(doc(firestore, EVALUATION_LINKS, token), removeUndefined({ po }), { merge: true });
@@ -570,6 +633,11 @@ export async function createEvaluationLinkCloud(input: {
   createdBy?: string;
   workspaceName?: string;
 }) {
+  if (neonEnabled()) {
+    const link=await neonWrite<PublicEvaluationLink>("createLink", {data:input});
+    const origin=typeof window!=="undefined"?window.location.origin:"";
+    return {token:link.token,url:origin+"/evaluate/"+link.token,record:link};
+  }
   const firestore = requireDb();
   await signInToFirebase();
   const token = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`.replace(/[^a-z0-9]/gi, "").slice(0, 32);
@@ -604,6 +672,7 @@ export async function createEvaluationLinkCloud(input: {
 }
 
 export async function markEvaluationEmailSentCloud(token: string, recipient: string) {
+  if (neonEnabled()) { await neonWrite("markEmail", {token,recipient}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   const linkRef = doc(firestore, EVALUATION_LINKS, token);
@@ -620,6 +689,7 @@ export async function markEvaluationEmailSentCloud(token: string, recipient: str
 }
 
 export async function getPublicEvaluationLink(token: string): Promise<PublicEvaluationLink | null> {
+  if (neonEnabled()) return neonPublicGet<PublicEvaluationLink>(token);
   const firestore = requireDb();
   const snap = await getDoc(doc(firestore, EVALUATION_LINKS, token));
   if (!snap.exists()) return null;
@@ -628,6 +698,8 @@ export async function getPublicEvaluationLink(token: string): Promise<PublicEval
 }
 
 export function subscribeEvaluationContacts(callback: (items: EvaluationContact[]) => void, onError?: (error: Error) => void): Unsubscribe {
+  if (neonEnabled()) return neonWatch<EvaluationContact>("evaluationContacts",
+    (items)=>callback(items.sort((a,b)=>a.name.localeCompare(b.name))),onError);
   const firestore = requireDb();
   return onSnapshot(
     query(collection(firestore, EVALUATION_CONTACTS)),
@@ -649,6 +721,7 @@ export async function upsertEvaluationContactCloud(input: {
   createdBy?: string;
   replaceRoles?: boolean;
 }) {
+  if (neonEnabled()) return neonWrite<EvaluationContact>("upsertContact",{data:input});
   const firestore = requireDb();
   await signInToFirebase();
   const cleanName = String(input.name || "").trim();
@@ -682,6 +755,7 @@ export async function upsertEvaluationContactCloud(input: {
 }
 
 export async function deleteEvaluationContactCloud(id: string) {
+  if (neonEnabled()) { await neonWrite("deleteContact",{id}); return; }
   const firestore = requireDb();
   await signInToFirebase();
   await deleteDoc(doc(firestore, EVALUATION_CONTACTS, String(id)));
@@ -693,7 +767,18 @@ export async function createPublicRequisitionerEvaluation(input: {
   scores: Record<string, number>;
   comments: string;
   overall: number;
+  ratingRemarks?: Record<string, string>;
+  customerSatisfaction?: {
+    timeliness: number;
+    accuracy: number;
+    comments: string;
+    evaluatedBy: string;
+  };
 }) {
+  if (neonEnabled()) return neonPublicSubmit(input.token,{
+    scores:input.scores,comments:input.comments,ratingRemarks:input.ratingRemarks||{},
+    customerSatisfaction:input.customerSatisfaction,
+  });
   const firestore = requireDb();
   const role: EvaluationRole =
     input.link.evaluatorRole === "purchaser"
@@ -741,6 +826,9 @@ export async function createPublicRequisitionerEvaluation(input: {
     evaluatorEmail: input.link.evaluatorEmail || (role === "purchaser" ? input.link.po.buyerEmail : role === "amd_personnel" ? input.link.amdEmail : input.link.requisitionerEmail) || "",
     submittedAt,
     evaluationLinkId: input.token,
+    scores: input.scores,
+    ratingRemarks: input.ratingRemarks || {},
+    customerSatisfaction: role === "requisitioner" ? (input.customerSatisfaction || null) : null,
   };
   const calculateLeadTimeDays = (orderDate?: string, actualDeliveryDate?: string) => {
     if (!orderDate || !actualDeliveryDate) return null;

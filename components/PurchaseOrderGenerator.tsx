@@ -12,6 +12,7 @@ import {
   Sparkles,
   UploadCloud,
   UserCheck,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import {
@@ -30,7 +31,10 @@ import {
   type EvaluationContact,
   type EvaluationContactRole,
 } from "../lib/firestore";
-import { cloudinaryConfigured, getCloudinarySetupMessage, uploadPoDocumentToCloudinary, type CloudinaryPoDocument } from "../lib/cloudinary";
+import { readPrivatePoChunks } from "../lib/privatePoReader";
+import { auth } from "../lib/firebase";
+import { neonEnabled, neonWrite } from "../lib/neonClient";
+import { cloudinaryConfigured, getCloudinarySetupMessage, uploadPoDocumentToCloudinary } from "../lib/cloudinary";
 
 export type PurchaseOrderSheetMatch = {
   poNumber: string;
@@ -110,6 +114,10 @@ const amount = (value: unknown) => {
 
 const normalizeKey = (value: unknown) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 const normalizePerson = (value: unknown) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+// Sir JC is the designated Purchasing evaluation recipient in this Preview.
+// The authorized school directory records his full name as John Carlo Campit.
+const PURCHASING_EVALUATOR_NAME = "JC Campit";
+const PURCHASING_EVALUATOR_DIRECTORY_NAME = "John Carlo Campit";
 
 const fmtDate = (value?: string) => {
   if (!value) return "";
@@ -228,9 +236,24 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const [amdLookupOpen, setAmdLookupOpen] = useState(false);
   const [requisitioners, setRequisitioners] = useState<{ name: string; email: string; department?: string }[]>([]);
   const [sending, setSending] = useState(false);
+  const [testEmailSending, setTestEmailSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [poExtracting, setPoExtracting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [schoolDriveEnabled, setSchoolDriveEnabled] = useState(() => !neonEnabled() && cloudinaryConfigured());
+  const [schoolEmailEnabled, setSchoolEmailEnabled] = useState(false);
+  const [schoolDriveMessage, setSchoolDriveMessage] = useState("");
+  const [schoolDriveChecking, setSchoolDriveChecking] = useState(false);
+  const [replacingLink, setReplacingLink] = useState(false);
+
+  const [privatePoPreview, setPrivatePoPreview] = useState("");
+  const [privatePoLoading, setPrivatePoLoading] = useState(false);
+  const [privatePoOpen, setPrivatePoOpen] = useState(false);
+  const [privatePoError, setPrivatePoError] = useState("");
+  const [privatePoTitle, setPrivatePoTitle] = useState("Official PO document");
+  const [privatePoMime, setPrivatePoMime] = useState("");
+
+
   const [createdLinks, setCreatedLinks] = useState<{ purchaser?: string; requisitioner?: string; amd_personnel?: string }>({});
   const createdLink = createdLinks.requisitioner || createdLinks.amd_personnel || "";
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -243,16 +266,19 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     setLoading(true);
     setLiveError("");
     try {
-      const response = await fetch("/api/po-lookup", { cache: "no-store" });
+      const token=neonEnabled()?await auth?.currentUser?.getIdToken():null;
+      const response = await fetch("/api/po-lookup", {
+        cache:"no-store",headers:token?{Authorization:"Bearer "+token}:{},
+      });
       const data = await response.json();
-      if (!response.ok || !data?.ok) throw new Error(data?.message || "Google Sheet is unavailable.");
+      if (!response.ok || !data?.ok) throw new Error(data?.message || "Purchase order records are currently unavailable.");
       setPoRecords(Array.isArray(data.poRecords) ? data.poRecords : []);
       setPrfRecords(Array.isArray(data.prfRecords) ? data.prfRecords : []);
       setRequisitioners(Array.isArray(data.requisitioners) ? data.requisitioners : []);
       setFetchedAt(data.fetchedAt || new Date().toISOString());
-      onNotify(`Google Sheet synced · ${Array.isArray(data.poRecords) ? data.poRecords.length : 0} PO groups · ${Array.isArray(data.prfRecords) ? data.prfRecords.length : 0} PRF records loaded.`);
+      onNotify(`Records synced · ${Array.isArray(data.poRecords) ? data.poRecords.length : 0} PO groups · ${Array.isArray(data.prfRecords) ? data.prfRecords.length : 0} PRF records loaded.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to sync the Google Sheet.";
+      const message = error instanceof Error ? error.message : "Unable to refresh purchase order records.";
       setLiveError(message);
       onNotify(message);
     } finally {
@@ -275,6 +301,97 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       stopContacts();
     };
   }, []);
+
+  useEffect(() => {
+    const controller=new AbortController();
+    void fetch("/api/send-evaluation",{cache:"no-store",signal:controller.signal})
+      .then(async r=>r.ok?r.json():null)
+      .then(info=>{if(!controller.signal.aborted)setSchoolEmailEnabled(info?.enabled===true);})
+      .catch(()=>{if(!controller.signal.aborted)setSchoolEmailEnabled(false);});
+    return ()=>controller.abort();
+  },[]);
+
+  useEffect(() => {
+    if(!neonEnabled())return;
+    const controller=new AbortController();
+    void fetch("/api/po-drive",{cache:"no-store",signal:controller.signal})
+      .then(async response=>response.ok?response.json():null)
+      .then(info=>{if(!controller.signal.aborted)setSchoolDriveEnabled(info?.uploadEnabled===true);})
+      .catch(()=>{if(!controller.signal.aborted)setSchoolDriveEnabled(false);});
+    return ()=>controller.abort();
+  },[]);
+
+  useEffect(()=>()=>{
+    if(privatePoPreview)URL.revokeObjectURL(privatePoPreview);
+  },[privatePoPreview]);
+  useEffect(()=>{
+    if(!previewOpen){
+      setPrivatePoOpen(false);
+      setPrivatePoPreview("");
+      setPrivatePoError("");
+    }
+  },[previewOpen]);
+
+
+  async function checkSchoolDrive(){
+    if(!neonEnabled()){
+      const ready=cloudinaryConfigured();
+      setSchoolDriveEnabled(ready);
+      setSchoolDriveMessage(ready
+        ? "Legacy official PO document uploads are available."
+        : getCloudinarySetupMessage());
+      return;
+    }
+    setSchoolDriveChecking(true);
+    setSchoolDriveMessage("");
+    try{
+      const bearer=await auth?.currentUser?.getIdToken();
+      if(!bearer)throw new Error("Please sign in as an active Purchasing administrator.");
+      const result=await fetch("/api/po-drive?diagnostic=1",{
+        cache:"no-store",headers:{Authorization:"Bearer "+bearer},
+      });
+      const body=await result.json();
+      if(!result.ok||!body.ok)throw new Error(body.message||"Document access check is unavailable.");
+      setSchoolDriveEnabled(Boolean(body.canUpload));
+      setSchoolDriveMessage(String(body.message||"Document access requires administrator approval."));
+    }catch(error){
+      setSchoolDriveMessage(error instanceof Error?error.message:"Document access is unavailable.");
+    }finally{setSchoolDriveChecking(false);}
+  }
+
+  function closePrivatePoPreview(){
+    setPrivatePoOpen(false);
+    setPrivatePoPreview("");
+    setPrivatePoError("");
+  }
+
+  async function openPrivatePoFile(fileId:string, name:string) {
+    // Show the dialog immediately so staff can see loading progress and
+    // errors instead of wondering why they remain on the same website.
+    setPrivatePoTitle(name||"Official PO document");
+    setPrivatePoOpen(true);
+    setPrivatePoPreview("");
+    setPrivatePoMime("");
+    setPrivatePoError("");
+    if(!/^[A-Za-z0-9_-]{15,150}$/.test(fileId)){
+      setPrivatePoError("The saved PO document reference is incomplete. Contact the Purchasing administrator.");
+      return;
+    }
+    setPrivatePoLoading(true);
+    try{
+      const token=await auth?.currentUser?.getIdToken();
+      if(!token)throw new Error("Sign in as an approved Purchasing administrator to open this PO.");
+      const doc=await readPrivatePoChunks(
+        index=>"/api/po-drive-file?fileId="+encodeURIComponent(fileId)+"&chunkIndex="+index,
+        token,
+      );
+      setPrivatePoMime(doc.mimeType);
+      setPrivatePoPreview(URL.createObjectURL(doc.blob));
+    }catch(error){
+      setPrivatePoError(error instanceof Error?error.message:"Could not load the private PO.");
+    }finally{setPrivatePoLoading(false);}
+  }
+
 
   const savedByPo = useMemo(() => {
     const map = new Map<string, PurchaseOrder>();
@@ -471,8 +588,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       discountPct: saved?.discountPct ?? amount((first as any).discountPct),
       discountAmt: saved?.discountAmt ?? amount((first as any).discountAmt),
       total: saved?.total ?? total,
-      buyerName: first.buyerName || prf?.buyerName || saved?.buyerName || currentUser?.displayName || "",
-      buyerEmail: first.buyerEmail || saved?.buyerEmail || currentUser?.email || "",
+      buyerName: first.buyerName || prf?.buyerName || saved?.buyerName || "",
+      buyerEmail: first.buyerEmail || saved?.buyerEmail || "",
       approverName: saved?.approverName || "",
       actualDeliveryDate: first.actualDeliveryDate || prf?.actualDeliveryDate || saved?.actualDeliveryDate || "",
       receivedBy: first.receivedBy || prf?.receivedBy || saved?.receivedBy || "",
@@ -482,6 +599,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       items: saved?.items?.length ? saved.items : items,
       documentProvider: saved?.documentProvider,
       documentPages: saved?.documentPages,
+      documentFileId: saved?.documentFileId || saved?.documentPages?.[0]?.fileId,
       documentUrl: saved?.documentUrl,
       documentPath: saved?.documentPath,
       documentName: saved?.documentName,
@@ -514,7 +632,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       poNumber: saved?.poNumber || "",
       prfNumber: item.prfNumber || saved?.prfNumber || "",
       requisitioner: item.requisitioner || saved?.requisitioner || "",
-      requisitionerEmail: item.email || saved?.requisitionerEmail || "",
+      requisitionerEmail: item.requisitionerEmail || item.email || saved?.requisitionerEmail || "",
       department: item.department || saved?.department || "",
       purpose: item.purpose || saved?.purpose || "",
       vendorName: saved?.vendorName || "",
@@ -532,8 +650,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       discountPct: saved?.discountPct || 0,
       discountAmt: saved?.discountAmt || 0,
       total: saved?.total || 0,
-      buyerName: saved?.buyerName || currentUser?.displayName || "",
-      buyerEmail: saved?.buyerEmail || currentUser?.email || "",
+      buyerName: saved?.buyerName || "",
+      buyerEmail: saved?.buyerEmail || "",
       approverName: saved?.approverName || "",
       actualDeliveryDate: saved?.actualDeliveryDate || "",
       receivedBy: saved?.receivedBy || "",
@@ -543,6 +661,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       items,
       documentProvider: saved?.documentProvider,
       documentPages: saved?.documentPages,
+      documentFileId: saved?.documentFileId || saved?.documentPages?.[0]?.fileId,
       documentUrl: saved?.documentUrl,
       documentPath: saved?.documentPath,
       documentName: saved?.documentName,
@@ -552,6 +671,19 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       documentUploadedBy: saved?.documentUploadedBy,
       documentSource: saved?.documentSource,
     };
+  };
+
+  // Exact school directory matches are trusted over stale PO/link contacts.
+  // Do not guess an evaluator's email from the logged-in user's account.
+  const findSchoolContact = (name: string) => {
+    const key = normalizePerson(name);
+    if (!key) return undefined;
+    const matches = requisitioners.filter(item =>
+      normalizePerson(item.name) === key &&
+      /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(item.email.trim())
+    );
+    const distinct = [...new Set(matches.map(item=>item.email.trim().toLowerCase()))];
+    return distinct.length===1 ? matches[0] : undefined;
   };
 
   const findDirectoryContact = (name: string, role?: EvaluationContactRole) => {
@@ -628,21 +760,45 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   };
 
   const selectRecord = (group: PurchaseOrderSheetRecord) => {
-    const po = buildFromSheet(group);
-    const pendingPurchaser = po.poNumber ? getPendingLink(po.poNumber, "purchaser") : undefined;
-    const pendingReq = po.poNumber ? getPendingLink(po.poNumber, "requisitioner") : undefined;
-    const pendingAmd = po.poNumber ? getPendingLink(po.poNumber, "amd_personnel") : undefined;
-    const amdMatch = allEvaluatorContacts.find((item) => normalizePerson(item.name) === normalizePerson(po.receivedBy));
-    const reqDirectory = findDirectoryContact(po.requisitioner, "requisitioner");
-    const buyerDirectory = findDirectoryContact(po.buyerName, "purchaser");
-    setSelectedPo(po);
-    setBuyerEmail(pendingPurchaser?.evaluatorEmail || pendingPurchaser?.buyerEmail || po.buyerEmail || buyerDirectory?.email || "");
-    setRequisitionerEmail(pendingReq?.evaluatorEmail || pendingReq?.requisitionerEmail || po.requisitionerEmail || reqDirectory?.email || "");
-    setAmdEmail(pendingAmd?.evaluatorEmail || pendingAmd?.amdEmail || amdMatch?.email || findDirectoryContact(po.receivedBy, "amd_personnel")?.email || "");
+    const po=buildFromSheet(group);
+    const pendingPurchaser=po.poNumber?getPendingLink(po.poNumber,"purchaser"):undefined;
+    const pendingReq=po.poNumber?getPendingLink(po.poNumber,"requisitioner"):undefined;
+    const pendingAmd=po.poNumber?getPendingLink(po.poNumber,"amd_personnel"):undefined;
+    const sheetReq=findSchoolContact(po.requisitioner);
+    const sheetAmd=findSchoolContact(po.receivedBy);
+    const sheetBuyer=findSchoolContact(PURCHASING_EVALUATOR_DIRECTORY_NAME);
+    const reqDir=findDirectoryContact(po.requisitioner,"requisitioner");
+    const buyerDir=findDirectoryContact(PURCHASING_EVALUATOR_NAME,"purchaser") ||
+      findDirectoryContact(PURCHASING_EVALUATOR_DIRECTORY_NAME,"purchaser");
+    const amdDir=findDirectoryContact(po.receivedBy,"amd_personnel");
+    const existingEmail=(link:PublicEvaluationLink|undefined,name:string) =>
+      link&&normalizePerson(link.evaluatorName)===normalizePerson(name)
+        ?String(link.evaluatorEmail||"").trim():"";
+    // A buyer assigned to the PO is not necessarily the designated evaluator.
+    // Only reuse a saved email when the saved name matches Sir JC's name.
+    const wasJc=normalizePerson(po.buyerName)===normalizePerson(PURCHASING_EVALUATOR_NAME) ||
+      normalizePerson(po.buyerName)===normalizePerson(PURCHASING_EVALUATOR_DIRECTORY_NAME);
+    const buyerResolved=sheetBuyer?.email || buyerDir?.email ||
+      (wasJc ? po.buyerEmail : "") ||
+      existingEmail(pendingPurchaser,PURCHASING_EVALUATOR_NAME) || "";
+    const reqResolved=sheetReq?.email || reqDir?.email || po.requisitionerEmail ||
+      existingEmail(pendingReq,po.requisitioner) || "";
+    const amdResolved=sheetAmd?.email || amdDir?.email ||
+      existingEmail(pendingAmd,po.receivedBy) || "";
+    const corrected={...po,buyerName:PURCHASING_EVALUATOR_NAME,
+      buyerEmail:buyerResolved,requisitionerEmail:reqResolved};
+    setSelectedPo(corrected);
+    setBuyerEmail(buyerResolved);
+    setRequisitionerEmail(reqResolved);
+    setAmdEmail(amdResolved);
+    const safeExistingUrl=(link:PublicEvaluationLink|undefined,name:string,email:string) =>
+      link && normalizePerson(link.evaluatorName)===normalizePerson(name) &&
+      String(link.evaluatorEmail||"").trim().toLowerCase()===email.trim().toLowerCase()
+        ?`${window.location.origin}/evaluate/${link.token}`:"";
     setCreatedLinks({
-      purchaser: pendingPurchaser ? `${window.location.origin}/evaluate/${pendingPurchaser.token}` : "",
-      requisitioner: pendingReq ? `${window.location.origin}/evaluate/${pendingReq.token}` : "",
-      amd_personnel: pendingAmd ? `${window.location.origin}/evaluate/${pendingAmd.token}` : "",
+      purchaser:safeExistingUrl(pendingPurchaser,PURCHASING_EVALUATOR_NAME,buyerResolved),
+      requisitioner:safeExistingUrl(pendingReq,po.requisitioner,reqResolved),
+      amd_personnel:safeExistingUrl(pendingAmd,po.receivedBy,amdResolved),
     });
     setPreviewOpen(true);
   };
@@ -651,7 +807,16 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const roles = ["purchaser", "requisitioner", "amd_personnel"] as const;
     await Promise.all(roles.map(async (role) => {
       const link = getPendingLink(po.poNumber, role);
-      if (link) await updateEvaluationLinkPOCloud(link.token, po);
+      const currentName=role==="purchaser"?po.buyerName:
+        role==="requisitioner"?po.requisitioner:po.receivedBy;
+      const currentEmail=role==="purchaser"?po.buyerEmail:
+        role==="requisitioner"?po.requisitionerEmail:resolveAmdEmail();
+      // An outdated link belongs to its original recipient until manually revoked.
+      if(link && normalizePerson(link.evaluatorName)===normalizePerson(currentName) &&
+        String(link.evaluatorEmail||"").trim().toLowerCase()===
+          String(currentEmail||"").trim().toLowerCase()){
+        await updateEvaluationLinkPOCloud(link.token,po);
+      }
     }));
   };
 
@@ -685,7 +850,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     });
   };
 
-  const uploadOfficialPo = async (files: File[]) => {
+  const uploadLegacyPo = async (files: File[]) => {
     if (!selectedPo) return;
     const chosen = files.filter(Boolean);
     if (!chosen.length) return;
@@ -824,21 +989,291 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     }
   };
 
+  const uploadOfficialPo = async (files: File[]) => {
+    if(!neonEnabled())return uploadLegacyPo(files);
+    if (!selectedPo) return;
+    const chosen = files.filter(Boolean);
+    if (!chosen.length) return;
+    if(!schoolDriveEnabled){
+      onNotify("Document upload access must be enabled by an administrator. Select Check document access to see the setup status. No PO was uploaded.");
+      return;
+    }
+    if(!selectedPo.poNumber.trim()){
+      onNotify("Enter the PO number before saving the official document.");
+      return;
+    }
+    const totalBytes=chosen.reduce((sum,file)=>sum+file.size,0);
+    if(chosen.some(file=>file.size<1||file.size>8*1024*1024||
+      !["application/pdf","image/jpeg","image/png","image/webp"].includes(file.type))){
+      onNotify("Choose PDF, JPG, PNG, or WebP files up to 8 MiB each.");
+      return;
+    }
+    if(totalBytes>20*1024*1024){
+      onNotify("PO attachments must total no more than 20 MiB. Upload fewer pages.");
+      return;
+    }
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      const documentPages:Array<{
+        url:string;fileId?:string;name:string;mimeType?:string;size?:number;
+      }>=[];
+      const idToken=await auth?.currentUser?.getIdToken();
+      if(!idToken)throw new Error("Sign in as an approved Purchasing administrator.");
+      const CHUNK_SIZE=1024*1024;
+      const totalChunkCount=chosen.reduce((sum,file)=>sum+Math.ceil(file.size/CHUNK_SIZE),0);
+      let uploadedChunks=0;
+      for(const file of chosen){
+        const uploadId=crypto.randomUUID();
+        const chunkCount=Math.ceil(file.size/CHUNK_SIZE);
+        const metadata={
+          poNumber:selectedPo.poNumber,
+          prfNumber:selectedPo.prfNumber||"",
+          name:file.name,mimeType:file.type,
+          uploadId,totalBytes:file.size,chunkCount,
+        };
+        for(let index=0;index<chunkCount;index++){
+          const form=new FormData();
+          for(const [name,value] of Object.entries(metadata)){
+            form.set(name,String(value));
+          }
+          form.set("chunkIndex",String(index));
+          form.set("file",file.slice(index*CHUNK_SIZE,(index+1)*CHUNK_SIZE),file.name);
+          const response=await fetch("/api/po-drive",{
+            method:"POST",headers:{Authorization:"Bearer "+idToken},body:form,
+          });
+          const reply=await response.json();
+          if(!response.ok||!reply.ok)throw new Error(
+            reply.message||"The school-owned Drive did not accept this PO chunk.");
+          uploadedChunks++;
+          setUploadProgress(Math.round(uploadedChunks/totalChunkCount*95));
+        }
+        const response=await fetch("/api/po-drive",{
+          method:"POST",
+          headers:{"Content-Type":"application/json",Authorization:"Bearer "+idToken},
+          body:JSON.stringify({action:"finish",...metadata}),
+        });
+        const saved=await response.json();
+        if(!response.ok||!saved.ok||!saved.fileId)throw new Error(
+          saved.message||"Could not finish saving the official PO document.");
+        documentPages.push({
+          fileId:String(saved.fileId),
+          url:"/api/po-drive-file?fileId="+encodeURIComponent(String(saved.fileId)),
+          name:String(saved.name||file.name),mimeType:String(saved.mimeType||file.type),
+          size:Number(saved.size||file.size),
+        });
+      }
+      setUploadProgress(100);
+
+      // Read visible PO details from the uploaded official document itself.
+      // PDFs are processed as PDFs; multiple image pages are processed one-by-one.
+      let extracted: any = null;
+      const extractionFiles = chosen.filter((file) =>
+        /^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type || "") || file.type === "application/pdf",
+      );
+      if (extractionFiles.length) {
+        setPoExtracting(true);
+        try {
+          const merged: any = { items: [] };
+          const seenItems = new Set<string>();
+          for (const sourceFile of extractionFiles.slice(0, 6)) {
+            try {
+              const documentData = await fileToDataUrl(sourceFile);
+              const response = await fetch("/api/gemini-po-extract", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image: documentData }),
+              });
+              const data = await response.json();
+              if (!response.ok || !data?.ok || !data?.data) continue;
+              const current = data.data;
+              for (const key of [
+                "poNumber", "supplier", "attention", "vendorPhone", "vendorEmail", "vendorAddress", "vendorCity",
+                "deliveryAddress", "orderDate", "expectedDate", "actualDeliveryDate", "paymentTerms", "prfNumber",
+                "requisitioner", "purpose", "buyerName", "receivedBy", "status", "subtotal", "discountPct", "discountAmt", "total", "notes",
+              ]) {
+                if (!merged[key] && current[key] !== undefined && current[key] !== null && String(current[key]).trim()) merged[key] = current[key];
+              }
+              if (Array.isArray(current.items)) {
+                for (const item of current.items) {
+                  const key = [item.description, item.qty, item.unit, item.unitPrice, item.lineTotal].map((v) => String(v || "").trim().toLowerCase()).join("|");
+                  if (!key.replace(/\|/g, "") || seenItems.has(key)) continue;
+                  seenItems.add(key);
+                  merged.items.push(item);
+                }
+              }
+            } catch (sourceError) {
+              console.warn("PO detail extraction failed for source file:", sourceError);
+            }
+          }
+          extracted = merged.items.length || Object.keys(merged).length > 1 ? merged : null;
+        } finally {
+          setPoExtracting(false);
+        }
+      }
+
+      const extractedItems: PurchaseOrderLine[] = Array.isArray(extracted?.items)
+        ? extracted.items.map((item: any, index: number) => {
+            const qty = item.qty ?? "";
+            const unitPrice = item.unitPrice ?? "";
+            const discount = item.itemDiscountPct ?? 0;
+            const lineTotal = item.lineTotal ?? (amount(qty) * amount(unitPrice) * Math.max(0, 1 - amount(discount) / 100));
+            return { line: index + 1, description: String(item.description || ""), unit: String(item.unit || "pcs"), qty, unitPrice, itemDiscountPct: discount, lineTotal };
+          }).filter((item: PurchaseOrderLine) => item.description || amount(item.qty) || amount(item.unitPrice) || amount(item.lineTotal))
+        : [];
+      const extractedSubtotal = amount(extracted?.subtotal) || extractedItems.reduce((sum, item) => sum + amount(item.qty) * amount(item.unitPrice), 0);
+      const extractedTotal = amount(extracted?.total) || extractedItems.reduce((sum, item) => sum + amount(item.lineTotal), 0);
+
+      const baseUpdated = {
+        ...selectedPo, documentProvider:"google-drive" as const,
+        documentPages,documentUrl:documentPages[0].url,
+        documentFileId:documentPages[0].fileId,
+        documentName:documentPages.length===1?documentPages[0].name:
+          `${selectedPo.poNumber} · ${documentPages.length} pages`,
+        documentMimeType:documentPages[0].mimeType||"application/octet-stream",
+        documentSize:documentPages.reduce((sum,doc)=>sum+Number(doc.size||0),0),
+        documentUploadedAt:new Date().toISOString(),documentUploadedBy:currentUser?.email||"",
+        documentSource:"school-private-drive-po",documentPath:undefined,
+      } as PurchaseOrder;
+
+      const hasExistingPrice = baseUpdated.items?.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0);
+      const enriched: PurchaseOrder = {
+        ...baseUpdated,
+        poNumber: baseUpdated.poNumber || String(extracted?.poNumber || "").trim(),
+        vendorName: baseUpdated.vendorName || String(extracted?.supplier || "").trim(),
+        vendorAttention: baseUpdated.vendorAttention || String(extracted?.attention || "").trim(),
+        vendorPhone: baseUpdated.vendorPhone || String(extracted?.vendorPhone || "").trim(),
+        deliveryAddress: baseUpdated.deliveryAddress || String(extracted?.deliveryAddress || "").trim(),
+        orderDate: baseUpdated.orderDate || String(extracted?.orderDate || "").trim(),
+        expectedDate: baseUpdated.expectedDate || String(extracted?.expectedDate || "").trim(),
+        paymentTerms: baseUpdated.paymentTerms || String(extracted?.paymentTerms || "").trim(),
+        prfNumber: baseUpdated.prfNumber || String(extracted?.prfNumber || "").trim(),
+        buyerName: baseUpdated.buyerName || String(extracted?.buyerName || "").trim(),
+        purpose: baseUpdated.purpose || String(extracted?.purpose || "").trim(),
+        notes: baseUpdated.notes || String(extracted?.notes || "").trim(),
+        items: extractedItems.length && !hasExistingPrice ? extractedItems : baseUpdated.items,
+        subtotal: amount(baseUpdated.subtotal) || extractedSubtotal,
+        discountPct: amount(baseUpdated.discountPct) || amount(extracted?.discountPct),
+        discountAmt: amount(baseUpdated.discountAmt) || amount(extracted?.discountAmt),
+        total: amount(baseUpdated.total) || extractedTotal,
+        actualDeliveryDate: baseUpdated.actualDeliveryDate || String(extracted?.actualDeliveryDate || "").trim(),
+        receivedBy: baseUpdated.receivedBy || String(extracted?.receivedBy || "").trim(),
+        status: baseUpdated.status || String(extracted?.status || "").trim() || "Pending",
+        deliveryLeadTimeDays: baseUpdated.deliveryLeadTimeDays ?? calculateDeliveryLeadTime(baseUpdated.orderDate, baseUpdated.actualDeliveryDate || String(extracted?.actualDeliveryDate || "").trim()) ?? undefined,
+        pricingSource: (extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0)
+          ? ((hasExistingPrice || amount(baseUpdated.total) > 0) ? "mixed" : "uploaded-po")
+          : (baseUpdated.pricingSource || (hasExistingPrice ? "spreadsheet" : undefined)),
+      };
+
+      setSelectedPo(enriched);
+      await savePurchaseOrderCloud(enriched);
+      await syncPendingEvaluationLinks(enriched);
+      const priceFound = extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0;
+      onNotify(`Official PO ${enriched.poNumber || "record"} saved successfully${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "Could not store the PO document.");
+    } finally {
+      setUploading(false); setPoExtracting(false); setUploadProgress(0);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const resolveBuyerEmail = () =>
-    buyerEmail.trim() || selectedPo?.buyerEmail || findDirectoryContact(selectedPo?.buyerName || "", "purchaser")?.email || "";
+    buyerEmail.trim() || selectedPo?.buyerEmail ||
+    findDirectoryContact(selectedPo?.buyerName || "", "purchaser")?.email || "";
 
   const resolveReqEmail = () =>
     requisitionerEmail.trim() ||
-    selectedPo?.requisitionerEmail ||
-    requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(selectedPo?.requisitioner))?.email ||
+    findSchoolContact(selectedPo?.requisitioner || "")?.email ||
     findDirectoryContact(selectedPo?.requisitioner || "", "requisitioner")?.email ||
-    "";
+    selectedPo?.requisitionerEmail || "";
 
   const resolveAmdEmail = () =>
     amdEmail.trim() ||
-    findDirectoryContact(selectedPo?.receivedBy || "", "amd_personnel")?.email ||
-    allEvaluatorContacts.find((item) => normalizePerson(item.name) === normalizePerson(selectedPo?.receivedBy))?.email ||
-    "";
+    findSchoolContact(selectedPo?.receivedBy || "")?.email ||
+    findDirectoryContact(selectedPo?.receivedBy || "", "amd_personnel")?.email || "";
+
+  // Reject likely misdirected evaluations before saving contacts, creating
+  // reusable links, or delivering anything to an incorrect recipient.
+  const emailAssignmentProblem = () => {
+    if(!selectedPo) return "";
+    const entries=[
+      {role:"Purchasing / Buyer",name:selectedPo.buyerName,email:resolveBuyerEmail()},
+      {role:"Requisitioner",name:selectedPo.requisitioner,email:resolveReqEmail()},
+      {role:"AMD / Received by",name:selectedPo.receivedBy,email:resolveAmdEmail()},
+    ].filter(entry=>entry.name.trim() && entry.email.trim());
+    for(const entry of entries){
+      if(!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(entry.email.trim())){
+        return entry.role+" email is invalid. Verify this address before saving or sending.";
+      }
+    }
+    for(let i=0;i<entries.length;i++){
+      for(let j=i+1;j<entries.length;j++){
+        if(entries[i].email.trim().toLowerCase()===entries[j].email.trim().toLowerCase() &&
+          normalizePerson(entries[i].name)!==normalizePerson(entries[j].name)){
+          return entries[i].role+" and "+entries[j].role+
+            " are different people but share one email. Verify each recipient before continuing.";
+        }
+      }
+    }
+    return "";
+  };
+
+  const mismatchedPendingLink = () => {
+    if(!selectedPo?.poNumber) return null;
+    const targets=[
+      {role:"purchaser" as const,name:selectedPo.buyerName,email:resolveBuyerEmail()},
+      {role:"requisitioner" as const,name:selectedPo.requisitioner,email:resolveReqEmail()},
+      {role:"amd_personnel" as const,name:selectedPo.receivedBy,email:resolveAmdEmail()},
+    ];
+    for(const entry of targets){
+      if(!entry.name.trim() || !entry.email.trim())continue;
+      const pending=getPendingLink(selectedPo.poNumber,entry.role);
+      if(pending&&(
+        normalizePerson(pending.evaluatorName)!==normalizePerson(entry.name) ||
+        String(pending.evaluatorEmail||"").trim().toLowerCase()!==entry.email.trim().toLowerCase())){
+        return {role:entry.role,link:pending,
+          label:entry.role==="purchaser"?"Buyer":entry.role==="requisitioner"?"Requisitioner":"AMD"};
+      }
+    }
+    return null;
+  };
+
+  const pendingLinkProblem = () => {
+    const issue=mismatchedPendingLink();
+    return issue ? "An existing "+issue.label+
+      " evaluation link has another recipient. Revoke the outdated link before making a new one." : "";
+  };
+
+  const revokeOutdatedLink = async () => {
+    const mismatch=mismatchedPendingLink();
+    if(!mismatch||!selectedPo||replacingLink||!neonEnabled())return;
+    const wasEmailed=Boolean(mismatch.link.emailSentAt||mismatch.link.lastEmailSentAt);
+    const confirmation=wasEmailed
+      ? "WARNING: This "+mismatch.label+" evaluation link has already been marked as emailed. Revoking it permanently disables the old link. It does NOT recall the message already sent. Continue with recipient correction?"
+      : "Revoke the outdated "+mismatch.label+" evaluation link? The previous token will become invalid, but its history will be kept.";
+    if(!window.confirm(confirmation))return;
+    setReplacingLink(true);
+    try{
+      await neonWrite("revokePendingLink",{
+        token:mismatch.link.token,
+        poNumber:selectedPo.poNumber,
+        role:mismatch.role,
+        confirmPreviouslySent:wasEmailed,
+      });
+      setCreatedLinks(prev=>({...prev,[mismatch.role]:""}));
+      onNotify("Outdated "+mismatch.label+
+        " link revoked. The existing record is retained for audit. Wait for the recipient status to refresh, then select Create evaluation links.");
+    }catch(error){
+      onNotify(error instanceof Error?error.message:"Could not revoke the outdated evaluation link.");
+    }finally{setReplacingLink(false);}
+  };
+
+  const privateDriveFileId = (po:PurchaseOrder|null) =>
+    String(po?.documentFileId || po?.documentPages?.[0]?.fileId || "");
+  const hasStoredPrivatePo = (po:PurchaseOrder|null) =>
+    po?.documentProvider==="google-drive" &&
+    /^[A-Za-z0-9_-]{15,150}$/.test(privateDriveFileId(po));
 
   const rememberContact = async (role: EvaluationContactRole, name: string, email: string, department?: string) => {
     const cleanName = String(name || "").trim();
@@ -863,6 +1298,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       onNotify("Enter the PO number before saving the PO record.");
       return;
     }
+    const assignmentIssue=emailAssignmentProblem();
+    if(assignmentIssue){onNotify(assignmentIssue);return;}
     const reqEmail = resolveReqEmail();
     const next = {
       ...selectedPo,
@@ -884,10 +1321,16 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const createEvaluationLinks = async () => {
     if (!selectedPo) return;
+    if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
+      onNotify("Upload the official PO document before generating evaluation links.");
+      return;
+    }
     if (!selectedPo.poNumber.trim()) {
       onNotify("Enter the PO number first. This PRF has no PO group yet, so the PO number must be typed manually before evaluation links are created.");
       return;
     }
+    const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
+    if(recipientIssue){onNotify(recipientIssue);return;}
     const buyerAuto = resolveBuyerEmail();
     const reqEmail = resolveReqEmail();
     const amdAuto = resolveAmdEmail();
@@ -963,8 +1406,19 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     }
   };
 
-  const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel") => {
-    if (!selectedPo?.documentUrl) throw new Error("Store the official PO first. The stored Cloudinary document will be attached automatically.");
+  const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel", previewOnly = false) => {
+    if(previewOnly && !(neonEnabled() && role==="purchaser" &&
+      selectedPo?.poNumber.trim()==="32187" &&
+      normalizePerson(selectedPo.buyerName)==="jc campit")) {
+      throw new Error("This Preview send is restricted to JC Campit's Purchasing evaluation for PO 32187.");
+    }
+    if (!selectedPo?.documentUrl) throw new Error("Save the official PO document before sending.");
+    if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
+      throw new Error("This PO needs an approved official document before sending a new evaluation request.");
+    }
+    if(!schoolEmailEnabled && !previewOnly)throw new Error("Official evaluator email delivery is disabled in Preview.");
+    const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
+    if(recipientIssue)throw new Error(recipientIssue);
     if (!selectedPo.poNumber.trim()) throw new Error("Enter the PO number before sending the evaluation request.");
     if (hasCompletedRole(selectedPo.poNumber, role)) throw new Error("This evaluator already submitted for this Purchase Order.");
     const reqEmail = resolveReqEmail();
@@ -972,7 +1426,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const targetName = role === "purchaser" ? selectedPo.buyerName : role === "requisitioner" ? selectedPo.requisitioner : selectedPo.receivedBy;
     if (!targetName) throw new Error(role === "purchaser" ? "Add a Purchasing / Buyer name before sending." : role === "requisitioner" ? "Add a requisitioner name before sending." : "No Received by person is set for AMD evaluation.");
     if (!targetEmail) throw new Error(role === "purchaser" ? "No Purchasing / Buyer email was found. Enter a manual email or check the Employee sheet." : role === "requisitioner" ? "No requisitioner email was found. Enter a manual email or check the Employee sheet." : "No AMD / Received by email was found. Enter a manual email or check the Employee sheet.");
-    await rememberContact(role, targetName, targetEmail, selectedPo.department);
+    if(!previewOnly)await rememberContact(role, targetName, targetEmail, selectedPo.department);
 
     let link = role === "purchaser" ? createdLinks.purchaser : role === "requisitioner" ? createdLinks.requisitioner : createdLinks.amd_personnel;
     if (!link) {
@@ -996,9 +1450,10 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       setCreatedLinks((prev) => ({ ...prev, [role]: link }));
     }
 
+    const firebaseToken=await auth?.currentUser?.getIdToken();
     const response = await fetch("/api/send-evaluation", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(firebaseToken?{Authorization:"Bearer "+firebaseToken}:{}) },
       body: JSON.stringify({
         name: targetName,
         evaluatorRole: role,
@@ -1011,8 +1466,9 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         po: { ...selectedPo, buyerEmail: role === "purchaser" ? targetEmail : selectedPo.buyerEmail, deliveryLeadTimeDays: calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) ?? undefined },
         poDocumentUrl: selectedPo.documentUrl,
         poDocumentName: selectedPo.documentName || `${selectedPo.poNumber}.pdf`,
-        poDocuments: (selectedPo.documentPages || [{ url: selectedPo.documentUrl, name: selectedPo.documentName || `${selectedPo.poNumber}.pdf`, mimeType: selectedPo.documentMimeType }]).map((doc) => ({ url: doc.url, name: doc.name, mimeType: doc.mimeType })),
+        poDocuments: (selectedPo.documentPages || [{ url: selectedPo.documentUrl, fileId:selectedPo.documentFileId, name: selectedPo.documentName || `${selectedPo.poNumber}.pdf`, mimeType: selectedPo.documentMimeType }]).map((doc) => ({ url: doc.url, fileId:doc.fileId, name: doc.name, mimeType: doc.mimeType })),
         evaluationUrl: link,
+        ...(previewOnly ? { previewPurchasingRequest: "SEND_JC_PREVIEW_EVALUATION_32187" } : {}),
         workspace: { name: workspaceName, address: workspaceAddress, email: workspaceEmail },
       }),
     });
@@ -1022,7 +1478,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     try {
       const token = new URL(link, window.location.origin).pathname.split("/").filter(Boolean).pop() || "";
       if (!token) throw new Error("Missing evaluation link token.");
-      await markEvaluationEmailSentCloud(token, data?.recipient || targetEmail);
+      // Neon writes the email audit atomically on successful provider receipt.
+      if(!previewOnly)await markEvaluationEmailSentCloud(token, data?.recipient || targetEmail);
     } catch (error) {
       trackingWarning = "Email accepted but could not update send tracking: " +
         (error instanceof Error ? error.message : String(error));
@@ -1030,10 +1487,49 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     return { role, recipient: data?.recipient || targetEmail, attachmentCount: data?.attachmentCount || 1, link, trackingWarning };
   };
 
+  const sendPurchasingPreviewEmail = async () => {
+    if(!selectedPo||!neonEnabled()||selectedPo.poNumber.trim()!=="32187")return;
+    if(!window.confirm(
+      "PREVIEW TEST — Send the actual Purchasing evaluation link and official PO 32187 "+
+      "to Sir JC Campit's verified email? This email is a test, but the link can be submitted once. "+
+      "No other evaluator will be emailed. Continue?"
+    ))return;
+    setSending(true);
+    try{
+      const outcome=await sendOneEvaluation("purchaser",true);
+      onNotify("Purchasing evaluation Preview email accepted for Sir JC. "+
+        outcome.attachmentCount+" official PO attachment(s) included. "+
+        "Check Sir JC's Inbox/Spam. No Requisitioner or AMD email was sent.");
+    }catch(error){
+      onNotify(error instanceof Error?error.message:"Purchasing evaluation email test failed.");
+    }finally{setSending(false);}
+  };
+
+  const sendOnePurchasingTest = async () => {
+    if(!selectedPo || selectedPo.poNumber.trim()!=="32187" || !neonEnabled())return;
+    if(!window.confirm("TEST EMAIL ONLY — Send one Purchasing email to Sir JC Campit using the verified email in the Preview record? The official PO 32187 document will be attached, but no evaluation link will be sent. Continue?"))return;
+    setTestEmailSending(true);
+    try{
+      const idToken=await auth?.currentUser?.getIdToken();
+      if(!idToken)throw new Error("Sign in with an authorized Purchasing account first.");
+      const response=await fetch("/api/test-purchasing-email",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:"Bearer "+idToken},
+        body:JSON.stringify({confirm:"SEND_TEST_JC_32187"}),
+      });
+      const result=await response.json().catch(()=>({}));
+      if(!response.ok||!result.ok)throw new Error(
+        result.message||"The school email sender did not accept the test.");
+      onNotify(result.message||"Test accepted. Check Sir JC's Inbox and Spam.");
+    }catch(error){
+      onNotify(error instanceof Error?error.message:"Purchasing email test failed.");
+    }finally{setTestEmailSending(false);}
+  };
+
   const sendEmail = async () => {
     if (!selectedPo) return;
     if (!selectedPo.documentUrl) {
-      onNotify("Store the official PO first. The stored Cloudinary document will be attached automatically.");
+      onNotify("Save the official PO first. The document will be attached automatically.");
       return;
     }
     setSending(true);
@@ -1062,10 +1558,31 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     <div>
       <div className="page-heading">
         <div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE & EVALUATION</div><h1>PO Storage & Evaluation</h1><p>Find the PO, store the official document, verify its pricing, and send role-specific evaluation requests from one place.</p></div>
-        <div className="po-generator-actions"><a className="btn secondary" href="/email-directory"><Mail size={15}/> Email Directory</a><button className="btn secondary" onClick={() => void sync()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> {loading ? "Syncing…" : "Sync Google Sheet"}</button></div>
+        <div className="po-generator-actions"><button className="btn secondary" onClick={() => void checkSchoolDrive()} disabled={schoolDriveChecking}><ShieldCheck size={15}/>{schoolDriveChecking?"Checking access…":"Check document access"}</button><a className="btn secondary" href="/email-directory"><Mail size={15}/> Email Directory</a><button className="btn secondary" onClick={() => void sync()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> {loading ? "Syncing…" : "Sync records"}</button></div>
       </div>
 
-      <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Google Sheet needs attention" : fetchedAt ? "Google Sheet connected" : "Connecting to Google Sheet…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading PO and PRF details from the configured spreadsheet")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
+      <div className="panel" style={{padding:"12px 16px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:13}}>
+          <ShieldCheck size={17} color={schoolDriveEnabled?"#0f766e":"#b45309"}/>
+          <strong>Official PO Documents</strong>
+          <span style={{color:schoolDriveEnabled?"#047857":"#b45309"}}>
+            {schoolDriveEnabled?"Document access ready":"Document access unavailable"}
+          </span>
+        </div>
+        <p style={{fontSize:12,opacity:.8,margin:"6px 0 0"}}>
+          {schoolDriveEnabled
+            ? "PO documents are available to authorized Purchasing staff."
+            : neonEnabled()
+              ? "Document uploads require administrator access. Use Check document access to verify availability."
+              : "The existing PO upload service needs configuration. Check document access."}
+        </p>
+        {!schoolEmailEnabled && <p style={{color:"#92400e",fontSize:12,marginTop:5}}>
+          {neonEnabled()
+            ? "Official bulk email delivery is paused in Preview. One approved Purchasing evaluation email test is available to Sir JC for PO 32187."
+            : "Email delivery is unavailable until the school email integration is configured."}
+        </p>}
+      </div>
+      <div className={`live-sheet-status ${liveError ? "error" : ""}`}><div className="live-sheet-status-main"><span className="live-dot"/><div><b>{liveError ? "Record sync needs attention" : fetchedAt ? "Records up to date" : "Loading records…"}</b><small>{liveError || (fetchedAt ? `Last sync ${new Date(fetchedAt).toLocaleTimeString()} · automatic refresh every 60 seconds` : "Loading purchase order and request details")}</small></div></div><span className="po-generator-count">{poRecords.length.toLocaleString()} PO groups · {prfRecords.length.toLocaleString()} PRF records</span></div>
 
       <div className="po-evaluation-tabs"><button className={queueOnly ? "active" : ""} onClick={() => setQueueOnly(true)}>For Supplier Evaluation <span>{poRecords.filter((g) => !submittedByPo.has(normalizeKey(g.poNumber))).length + prfOnlyRecords.filter((item) => !submittedByPrf.has(normalizeKey(item.prfNumber))).length}</span></button><button className={!queueOnly ? "active" : ""} onClick={() => setQueueOnly(false)}>All PO Records <span>{poRecords.length + prfOnlyRecords.length}</span></button></div>
 
@@ -1108,9 +1625,84 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         </div>}
       </div>
 
-      {previewOpen && selectedPo && <div className="modal-backdrop"><div className="po-generator-modal"><div className="po-generator-modal-head"><div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE {selectedPo.documentUrl ? "· OFFICIAL DOCUMENT STORED" : "· WAITING FOR OFFICIAL DOCUMENT"}</div><h2>{selectedPo.poNumber}</h2><p>{selectedPo.vendorName || "Supplier"} · PRF {selectedPo.prfNumber || "—"}</p></div><button className="icon-button" onClick={() => setPreviewOpen(false)}><X size={18}/></button></div><div className="po-generator-modal-body"><div className="po-preview-card">
-        {selectedPo.documentUrl ? <div className="stored-po-viewer"><div className="stored-po-toolbar"><div><b>Official PO stored in Cloudinary</b><span>{selectedPo.documentName || "Stored PO document"}</span></div><a className="btn secondary btn-sm" href={selectedPo.documentUrl} target="_blank" rel="noreferrer">Open document</a></div>{(selectedPo.documentPages || [{ url: selectedPo.documentUrl, name: selectedPo.documentName || "Official PO", mimeType: selectedPo.documentMimeType }]).map((doc, index) => <div className="stored-po-page" key={`${doc.url}-${index}`}><div className="stored-po-page-label">{doc.mimeType === "application/pdf" && doc.pages && doc.pages > 1 ? `${doc.pages}-PAGE PDF` : `PAGE ${index + 1}${selectedPo.documentPages?.length ? ` OF ${selectedPo.documentPages.length}` : ""}`}</div>{doc.mimeType?.startsWith("image/") ? <img src={doc.url} alt={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-image"/> : <iframe title={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-frame" src={doc.url}/>} </div>)}<button className="btn ghost btn-sm replace-po-btn" disabled={!canEdit || uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? `Uploading… ${uploadProgress}%` : "Replace / add PO pages"}</button></div> : <div className="po-empty-document"><div className="po-empty-document-icon"><UploadCloud size={22}/></div><b>No official PO stored yet</b><span>Upload the actual PDF or select multiple page images. The stored document—not a generated template—will be used for the requisitioner email.</span></div>}<input ref={fileInputRef} hidden type="file" accept="application/pdf,image/*" multiple onChange={(e) => e.target.files?.length && void uploadOfficialPo(Array.from(e.target.files))}/></div>
-        <aside className="po-send-panel"><div className="section-kicker po-section-kicker">TRANSACTION IDENTIFIER</div><h3 className="po-section-title">PO / PRF details</h3><div className="field"><span>PO Number {selectedPo.poNumber ? "" : "· enter manually when available"}</span><input value={selectedPo.poNumber} onChange={(e) => setSelectedPo({ ...selectedPo, poNumber: e.target.value })} placeholder="Type PO number if the PRF has no PO group yet"/></div>{!selectedPo.poNumber && <div className="po-warning-note"><Search size={14}/><span>This PRF came directly from the V2 monitoring sheet and has no PO group yet. Enter the PO number here when available; the PRF details are already loaded.</span></div>}<div className="section-kicker po-section-kicker workflow-kicker">EVALUATION WORKFLOW</div><h3 className="po-workflow-title">1. Store official PO</h3><p className="po-workflow-description">Upload the actual PO PDF or scan. PDF files can contain multiple pages, and you can also select multiple page images. The stored Cloudinary document is the exact source attached to the Purchasing / Buyer, Requisitioner, and AMD evaluation emails.</p><button className="upload-drop-btn" disabled={!canEdit || uploading} onClick={() => fileInputRef.current?.click()}><UploadCloud size={18}/><span>{selectedPo.documentUrl ? "Replace stored PO" : "Upload / Scan PO"}</span><small>PDF, JPG, PNG · up to 50 MB total · multi-page supported</small></button>{selectedPo.documentUrl && <div className="stored-doc-callout"><CheckCircle2 size={16}/><div><b>PO document stored in Cloudinary</b><span>{selectedPo.documentName || "Official PO"}</span><small>{selectedPo.documentUploadedAt ? `Uploaded ${new Date(selectedPo.documentUploadedAt).toLocaleString()}` : ""}{selectedPo.documentPages?.length ? ` · ${selectedPo.documentPages.length} stored file${selectedPo.documentPages.length > 1 ? "s" : ""}` : ""}</small></div></div>}{uploading && <div className="po-upload-progress"><div><span>Uploading official PO to Cloudinary</span><b>{uploadProgress}%</b></div><i style={{ width: `${uploadProgress}%` }}/></div>}
+      {previewOpen && selectedPo && <div className="modal-backdrop"><div className="po-generator-modal"><div className="po-generator-modal-head"><div><div className="eyebrow"><span className="eyebrow-dot" /> PO STORAGE {selectedPo.documentUrl ? "· OFFICIAL DOCUMENT STORED" : "· WAITING FOR OFFICIAL DOCUMENT"}</div><h2>{selectedPo.poNumber}</h2><p>{selectedPo.vendorName || "Supplier"} · PRF {selectedPo.prfNumber || "—"}</p>{selectedPo.poNumber && <a href={`/print-evaluation/${encodeURIComponent(selectedPo.poNumber)}`} target="_blank" rel="noreferrer" className="btn secondary btn-sm" style={{ display: "inline-flex", marginTop: 8 }}>Print ISO Supplier Evaluation</a>}</div><button className="icon-button" onClick={() => setPreviewOpen(false)}><X size={18}/></button></div><div className="po-generator-modal-body"><div className="po-preview-card">
+        {selectedPo.documentUrl ? selectedPo.documentProvider==="google-drive" ?
+          <div className="stored-po-viewer">
+            <div className="stored-po-toolbar"><div><b>Official PO document available</b>
+              <span>{selectedPo.documentName||"Official PO document"}</span></div></div>
+            <p style={{fontSize:12,color:"#475569",margin:"10px 0"}}>
+              This document is available only to authorized users.
+            </p>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,margin:"12px 0"}}>
+              {(selectedPo.documentPages?.length
+                ? selectedPo.documentPages
+                : [{fileId:selectedPo.documentFileId,name:selectedPo.documentName||"Official PO",url:selectedPo.documentUrl}]).map((doc,index)=>(
+                  <button key={doc.fileId||index} type="button" className="btn secondary btn-sm"
+                    disabled={privatePoLoading||!doc.fileId}
+                    onClick={()=>doc.fileId&&void openPrivatePoFile(doc.fileId||"",doc.name||selectedPo.documentName||"Official PO")}>
+                    {"Preview page "+(index+1)}
+                  </button>
+                ))}
+            </div>
+            {privatePoOpen&&
+              <div role="presentation" style={{
+                position:"fixed",inset:0,zIndex:12000,background:"rgba(9,18,35,.78)",
+                display:"flex",alignItems:"center",justifyContent:"center",padding:12,
+              }}>
+                <div role="dialog" aria-modal="true" aria-label="Official private PO preview"
+                  style={{width:"min(1050px,100%)",height:"min(94vh,950px)",
+                    display:"flex",flexDirection:"column",overflow:"hidden",
+                    background:"#fff",borderRadius:13,boxShadow:"0 24px 80px rgba(0,0,0,.4)"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    gap:14,padding:"12px 16px",borderBottom:"1px solid #e2e8f0",flexWrap:"wrap"}}>
+                    <div style={{minWidth:0}}>
+                      <strong style={{fontSize:15,color:"#0f172a",display:"block",overflowWrap:"anywhere"}}>
+                        {privatePoTitle}
+                      </strong>
+                      <span style={{fontSize:12,color:"#475569"}}>Official PO document · authorized preview</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      {privatePoPreview&&
+                        <a className="btn secondary btn-sm" href={privatePoPreview}
+                          target="_blank" rel="noopener noreferrer">
+                          <Eye size={14}/> Open in new tab
+                        </a>}
+                      <button type="button" className="btn secondary btn-sm"
+                        onClick={closePrivatePoPreview} aria-label="Close private PO preview">
+                        <X size={15}/> Close
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{flex:1,minHeight:0,background:"#f1f5f9",
+                    display:"flex",justifyContent:"center",alignItems:"center",padding:10}}>
+                    {privatePoLoading?
+                      <div role="status" style={{textAlign:"center",padding:24,color:"#334155"}}>
+                        <RefreshCw size={24} className="spin"/>
+                        <p>Opening the official PO document…</p>
+                      </div>:
+                      privatePoError?
+                        <div role="alert" style={{maxWidth:500,padding:18,
+                          border:"1px solid #fecaca",borderRadius:8,background:"#fef2f2",
+                          color:"#991b1b"}}>
+                          <b>Could not open this PO document</b>
+                          <p style={{marginBottom:0}}>{privatePoError}</p>
+                        </div>:
+                        privatePoPreview?
+                          privatePoMime.startsWith("image/")?
+                            <img src={privatePoPreview} alt={privatePoTitle}
+                              style={{display:"block",maxHeight:"100%",maxWidth:"100%",objectFit:"contain"}}/>:
+                            <iframe title="Official PO PDF preview" src={privatePoPreview}
+                              style={{display:"block",width:"100%",height:"100%",border:0,
+                                borderRadius:6,background:"#fff"}}/>:
+                          <p style={{color:"#475569"}}>Select a document to preview.</p>}
+                  </div>
+                </div>
+              </div>}
+            <button className="btn ghost btn-sm replace-po-btn" disabled={!canEdit||uploading||!schoolDriveEnabled}
+              onClick={()=>fileInputRef.current?.click()}>Replace / add PO pages</button>
+          </div>
+          : <div className="stored-po-viewer"><div className="stored-po-toolbar"><div><b>Legacy official PO document (view only)</b><span>{selectedPo.documentName || "Stored PO document"}</span></div><a className="btn secondary btn-sm" href={selectedPo.documentUrl} target="_blank" rel="noreferrer">Open document</a></div>{(selectedPo.documentPages || [{ url: selectedPo.documentUrl, name: selectedPo.documentName || "Official PO", mimeType: selectedPo.documentMimeType }]).map((doc, index) => <div className="stored-po-page" key={`${doc.url}-${index}`}><div className="stored-po-page-label">{doc.mimeType === "application/pdf" && doc.pages && doc.pages > 1 ? `${doc.pages}-PAGE PDF` : `PAGE ${index + 1}${selectedPo.documentPages?.length ? ` OF ${selectedPo.documentPages.length}` : ""}`}</div>{doc.mimeType?.startsWith("image/") ? <img src={doc.url} alt={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-image"/> : <iframe title={`Official PO ${selectedPo.poNumber} page ${index + 1}`} className="stored-po-frame" src={doc.url}/>} </div>)}<button className="btn ghost btn-sm replace-po-btn" disabled={!canEdit || uploading || !schoolDriveEnabled} onClick={() => fileInputRef.current?.click()}>{uploading ? `Uploading… ${uploadProgress}%` : "Replace / add PO pages"}</button></div> : <div className="po-empty-document"><div className="po-empty-document-icon"><UploadCloud size={22}/></div><b>No official PO stored yet</b><span>Upload the actual PDF or select multiple page images. The stored document—not a generated template—will be used for the requisitioner email.</span></div>}<input ref={fileInputRef} hidden type="file" accept="application/pdf,image/*" multiple onChange={(e) => e.target.files?.length && void uploadOfficialPo(Array.from(e.target.files))}/></div>
+        <aside className="po-send-panel"><div className="section-kicker po-section-kicker">TRANSACTION IDENTIFIER</div><h3 className="po-section-title">PO / PRF details</h3><div className="field"><span>PO Number {selectedPo.poNumber ? "" : "· enter manually when available"}</span><input value={selectedPo.poNumber} onChange={(e) => setSelectedPo({ ...selectedPo, poNumber: e.target.value })} placeholder="Type PO number if the PRF has no PO group yet"/></div>{!selectedPo.poNumber && <div className="po-warning-note"><Search size={14}/><span>This PRF came directly from the V2 monitoring sheet and has no PO group yet. Enter the PO number here when available; the PRF details are already loaded.</span></div>}<div className="section-kicker po-section-kicker workflow-kicker">EVALUATION WORKFLOW</div><h3 className="po-workflow-title">1. Store official PO</h3><p className="po-workflow-description">Upload the official purchase order as a PDF or page images (up to 8 MiB per file). The document will remain available for authorized evaluation review.</p><button className="upload-drop-btn" disabled={!canEdit || uploading || !schoolDriveEnabled} onClick={() => fileInputRef.current?.click()}><UploadCloud size={18}/><span>{selectedPo.documentUrl ? "Replace stored PO" : "Upload / Scan PO"}</span><small>PDF, JPG, PNG · up to 8 MiB per file · multiple pages supported</small></button>{selectedPo.documentUrl && <div className="stored-doc-callout"><CheckCircle2 size={16}/><div><b>Official PO document saved</b><span>{selectedPo.documentName || "Official PO"}</span><small>{selectedPo.documentUploadedAt ? `Uploaded ${new Date(selectedPo.documentUploadedAt).toLocaleString()}` : ""}{selectedPo.documentPages?.length ? ` · ${selectedPo.documentPages.length} stored file${selectedPo.documentPages.length > 1 ? "s" : ""}` : ""}</small></div></div>}{uploading && <div className="po-upload-progress"><div><span>Uploading official PO document</span><b>{uploadProgress}%</b></div><i style={{ width: `${uploadProgress}%` }}/></div>}
           <div className="po-delivery-summary"><div><span>Expected delivery</span><b>{selectedPo.expectedDate || "—"}</b></div><div><span>Actual delivery</span><b>{selectedPo.actualDeliveryDate || "—"}</b></div><div><span>Delivery lead time</span><b>{calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate) !== null ? `${calculateDeliveryLeadTime(selectedPo.orderDate, selectedPo.actualDeliveryDate)} days` : "—"}</b></div><div><span>Status</span><b>{selectedPo.status || "Pending"}</b></div><div><span>Received by</span><b>{selectedPo.receivedBy || "—"}</b></div></div>
           <h3 className="po-workflow-title workflow-second">2. PO details &amp; pricing</h3>
           <div className="po-pricing-table-wrap">
@@ -1132,7 +1724,18 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
             <label className="field"><span>Total amount</span><input inputMode="decimal" value={String(selectedPo.total || "")} onChange={(e) => setSelectedPo({ ...selectedPo, total: amount(e.target.value) })} /></label>
           </div>
           <div className="po-pricing-source" style={{ display: "flex", alignItems: "center", gap: 8, margin: "-2px 0 8px", fontSize: 10.5, color: "#64748b" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0f766e", display: "inline-block" }} />{selectedPo.pricingSource === "uploaded-po" ? "Pricing source: uploaded official PO" : selectedPo.pricingSource === "mixed" ? "Pricing source: supplier spreadsheet + uploaded PO" : selectedPo.pricingSource === "spreadsheet" ? "Pricing source: supplier spreadsheet" : "Pricing source: manual / pending extraction"}</div>
-          <div className="po-pricing-note">{poExtracting ? "Reading pricing and PO details from the uploaded PDF/image…" : "PDFs and image scans are checked by Gemini for visible PO values. You can correct any value above before saving."}</div><h3 className="po-workflow-title workflow-second">3. Purchasing / Buyer evaluation</h3><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => { const next = e.target.value; const directory = findDirectoryContact(next, "purchaser"); setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || selectedPo.buyerEmail }); setBuyerEmail(directory?.email || buyerEmail); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · auto-resolved from Employee sheet</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">4. Requisitioner evaluation</h3><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · auto-resolved from Employee sheet</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">5. AMD Personnel / Received by evaluation</h3><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · auto-resolved from Employee sheet</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><div className="po-directory-hint">Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 16, marginBottom: 12 }}>
+          <div className="po-pricing-note">{poExtracting ? "Reading pricing and PO details from the uploaded PDF/image…" : "PDFs and image scans are checked by Gemini for visible PO values. You can correct any value above before saving."}</div><h3 className="po-workflow-title workflow-second">3. Purchasing / Buyer evaluation</h3><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => { const next = e.target.value; const directory = findDirectoryContact(next, "purchaser") ||
+          findSchoolContact(next === PURCHASING_EVALUATOR_NAME
+            ? PURCHASING_EVALUATOR_DIRECTORY_NAME : next);
+          setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || "" }); setBuyerEmail(directory?.email || ""); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · exact Email Directory match or manually verified</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">4. Requisitioner evaluation</h3><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · exact name match from school Requisitioner Details</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">5. AMD Personnel / Received by evaluation</h3><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · name matched from school directory or Email Directory</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label>{emailAssignmentProblem()&&<div role="alert" style={{color:"#991b1b",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:10,fontSize:12}}>{emailAssignmentProblem()}</div>}{pendingLinkProblem()&&<div role="alert" style={{color:"#92400e",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:10,fontSize:12}}>{pendingLinkProblem()}</div>}
+{mismatchedPendingLink() && neonEnabled() &&
+  <button type="button" className="btn secondary btn-sm"
+    disabled={replacingLink || !canEdit}
+    onClick={()=>void revokeOutdatedLink()}
+    style={{margin:"8px 0",border:"1px solid #f59e0b",color:"#92400e"}}>
+    {replacingLink?"Revoking…":"Revoke outdated "+mismatchedPendingLink()!.label+" link"}
+  </button>}
+<div className="po-directory-hint">Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 16, marginBottom: 12 }}>
   <strong style={{ fontSize: 13 }}>Evaluation Recipient Status</strong>
   {(["purchaser", "requisitioner", "amd_personnel"] as const)
     .filter((role) => role === "purchaser" ? Boolean(selectedPo.buyerName) : role === "requisitioner" ? Boolean(selectedPo.requisitioner) : Boolean(selectedPo.receivedBy))
@@ -1151,7 +1754,24 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         <span className={completed ? "badge badge-done" : "badge badge-pending"}>{status}{!completed && (latest?.reminderCount || 0) > 0 ? " · " + latest?.reminderCount + " reminders" : ""}</span>
       </div>;
     })}
-</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All use the same official Cloudinary PO attachment, while results are saved separately by evaluator role.</span></div></aside></div></div></div>}
+</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button>{neonEnabled() && selectedPo.poNumber.trim()==="32187" && <button type="button" className="btn secondary" disabled={testEmailSending||!canEdit} onClick={()=>void sendOnePurchasingTest()}><Mail size={16}/>{testEmailSending?"Sending test…":"Send attachment-only TEST email"}</button>}{neonEnabled() && !schoolEmailEnabled
+  ? (selectedPo.poNumber.trim()==="32187"
+      ? <button type="button" className="btn primary"
+          disabled={sending || testEmailSending || !canEdit ||
+            !hasStoredPrivatePo(selectedPo) || hasCompletedRole(selectedPo.poNumber,"purchaser")}
+          onClick={()=>void sendPurchasingPreviewEmail()}>
+          <Send size={16}/>{sending?"Sending Purchasing test…":"Send Purchasing evaluation to Sir JC"}
+        </button>
+      : <button type="button" className="btn primary" disabled
+          title="Only Sir JC's PO 32187 is approved for the Preview email test">
+          <Send size={16}/>Email delivery paused in Preview
+        </button>)
+  : <button className="btn primary"
+      disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled ||
+        (neonEnabled() && selectedPo.documentProvider!=="google-drive")}
+      onClick={() => void sendEmail()}>
+      <Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}
+    </button>}</div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All evaluators can view the same official PO document, while each role submits its own evaluation.</span></div></aside></div></div></div>}
     </div>
   );
 }

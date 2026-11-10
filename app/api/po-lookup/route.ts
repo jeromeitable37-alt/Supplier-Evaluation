@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { appSession,hasPermission,errorResponse,AppAccessError } from "../../../lib/server/neonAppAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -142,7 +143,65 @@ function pick(row: CsvRow, candidates: string[]) {
 }
 function pickNumber(row: CsvRow, candidates: string[]) { return numberish(pick(row, candidates)); }
 
+/**
+ * Read exact approved tabs from the private school-owned Apps Script.
+ * Server credentials remain on Vercel; never broaden the official Sheet's
+ * Drive sharing permissions merely to make the public CSV endpoint work.
+ */
+async function readPrivateSchoolSheet(sheetId:string,sheetName:string):Promise<CsvRow[]> {
+  const official=process.env.GOOGLE_SUPPLIER_SHEET_ID||DEFAULT_SHEET_ID;
+  const v2=process.env.GOOGLE_SUPPLIER_V2_SHEET_ID||DEFAULT_V2_SHEET_ID;
+  const source=sheetId===official?"official":sheetId===v2?"v2":"";
+  if(!source)throw new Error("Unrecognized private school workbook.");
+  const url=String(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL||"").trim();
+  const secret=String(process.env.PMS_WEBHOOK_SECRET||
+    process.env.GOOGLE_APPS_SCRIPT_SECRET||"").trim();
+  if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec(?:\?.*)?$/.test(url)||
+    secret.length<24){
+    throw new Error("Private school lookup is not configured in Vercel.");
+  }
+  let header:string[]=[];
+  const objects:CsvRow[]=[];
+  const limit=1500;
+  for(let startRow=1;startRow<=7500;startRow+=limit){
+    const response=await fetch(url,{
+      method:"POST",cache:"no-store",
+      headers:{"Content-Type":"application/json",Accept:"application/json"},
+      body:JSON.stringify({
+        action:"read_sheet_rows",secret,source,sheetName,startRow,maxRows:limit,
+      }),
+      signal:AbortSignal.timeout(25000),
+    });
+    let parsed:unknown={};
+    try{parsed=await response.json();}catch{}
+    const body=parsed&&typeof parsed==="object"&&!Array.isArray(parsed)
+      ? parsed as Record<string,unknown>:{};
+    if(!response.ok||body.ok!==true||!Array.isArray(body.rows)){
+      throw new Error("Private school tab read failed. Verify the authorized Apps Script lookup extension and redeploy.");
+    }
+    const rows=body.rows as unknown[][];
+    if(startRow===1){
+      if(!rows.length)return [];
+      header=(Array.isArray(rows[0])?rows[0]:[]).map(x=>clean(x));
+    }
+    const first=startRow===1?1:0;
+    for(let i=first;i<rows.length;i++){
+      const values=Array.isArray(rows[i])?rows[i]:[];
+      if(values.some(v=>clean(v))){
+        objects.push(Object.fromEntries(header.map((h,n)=>[h,clean(values[n]??"")])));
+      }
+    }
+    const lastRow=Number(body.lastRow||0);
+    if(lastRow<startRow+limit||rows.length<limit)return objects;
+  }
+  throw new Error("School tab exceeds the 7,500-row lookup safety limit.");
+}
+
 async function fetchCsv(sheetId: string, sheetName: string, explicitUrl?: string) {
+  if(process.env.NEXT_PUBLIC_DATA_BACKEND==="neon" &&
+    process.env.GOOGLE_SHEET_PRIVATE_LOOKUP_ENABLED==="true"){
+    return readPrivateSchoolSheet(sheetId,sheetName);
+  }
   const url = explicitUrl || `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
   const response = await fetch(url, { cache: "no-store", headers: { Accept: "text/csv,*/*" } });
   const text = await response.text();
@@ -238,7 +297,7 @@ function buildFlatPoRecords(rows: CsvRow[]): PurchaseOrderRecord[] {
       buyerName: pick(row, ["Buyer", "Buyer Name", "Purchaser", "Prepared By", "buyer_name"]),
       buyerEmail: pick(row, ["Buyer Email", "Purchaser Email"]),
       requisitioner: pick(row, ["Requisitioner", "Requisitioner Name"]),
-      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email"]),
+      requisitionerEmail: pick(row, ["Requisitioner Email", "Employee Email", "Email Address"]),
       department: pick(row, ["Department"]),
       purpose: pick(row, ["Purpose"]),
       quantity: pickNumber(row, ["Qty", "Quantity", "qty"]),
@@ -476,7 +535,19 @@ function parseSheetList(value: string | undefined, fallback: string[]) {
   return parsed.length ? parsed : fallback;
 }
 
-export async function GET() {
+export async function GET(request:Request) {
+  // The Neon Preview may include confidential PRF and employee directories.
+  // Production preserves its existing source behavior until school-approved
+  // end-to-end migration.
+  if(process.env.NEXT_PUBLIC_DATA_BACKEND==="neon"){
+    try{
+      const session=await appSession(request);
+      if(!hasPermission(session,"view_dashboard")&&
+        !hasPermission(session,"create_evaluations")){
+        throw new AppAccessError("Only approved Purchasing staff can read this directory.",403);
+      }
+    }catch(error){return errorResponse(error);}
+  }
   const supplierSheetId = process.env.GOOGLE_SUPPLIER_SHEET_ID || DEFAULT_SHEET_ID;
   const poSheet = process.env.GOOGLE_SUPPLIER_PO_SHEET || DEFAULT_PO_SHEET;
   const prfSheet = process.env.GOOGLE_SUPPLIER_PRF_SHEET || DEFAULT_PRF_SHEET;

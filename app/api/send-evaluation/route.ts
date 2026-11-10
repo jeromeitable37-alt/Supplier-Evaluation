@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { appSession, requirePermission, appPool, AppAccessError } from "../../../lib/server/neonAppAuth";
 import { officialPoAttachmentName } from "../../../lib/poAttachmentName";
 
 const DEFAULT_SHEET_ID = "1XjBq3f-zM8QUkgLPlDccbz9c1Jy8L0JTJUOrZ0skfHA";
@@ -105,7 +106,7 @@ async function sendViaAppsScript(input: {
   subject: string;
   html: string;
   text: string;
-  attachments: Array<{ url: string; name: string; mimeType?: string }>;
+  attachments: Array<{ url?: string; fileId?: string; name: string; mimeType?: string }>;
 }) {
   const url = String(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL || "").trim();
   const secret = String(process.env.PMS_WEBHOOK_SECRET || process.env.GOOGLE_APPS_SCRIPT_SECRET || "").trim();
@@ -137,9 +138,120 @@ async function sendViaAppsScript(input: {
   return data;
 }
 
+/** Public read-only capability status. Never expose school credentials. */
+export async function GET(){
+  const neonPreview=process.env.NEXT_PUBLIC_DATA_BACKEND==="neon";
+  const approved= !neonPreview ||
+    process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED==="true";
+  const configured=Boolean(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL&&
+    (process.env.PMS_WEBHOOK_SECRET||process.env.GOOGLE_APPS_SCRIPT_SECRET));
+  return NextResponse.json({ok:true,enabled:approved&&configured,
+    reason:approved?(configured?"ready":"school-webhook-unconfigured"):"preview-safety-lock",
+    delivery:"school-apps-script"},{
+    headers:{"Cache-Control":"no-store"},
+  });
+}
+
 export async function POST(request: Request) {
+  let claimedToken = "";
   try {
-    const body = await request.json();
+    let body = await request.json();
+    // Narrow one-recipient exception: does not enable ordinary Preview email,
+    // bulk sends, or official school Sheet writes.
+    const previewSafeSend = process.env.VERCEL_ENV === "preview" &&
+      process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+      process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true" &&
+      body?.previewPurchasingRequest === "SEND_JC_PREVIEW_EVALUATION_32187";
+    const approvedProductionMail=process.env.VERCEL_ENV==="production" &&
+      process.env.NEXT_PUBLIC_DATA_BACKEND==="neon";
+    if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+        !approvedProductionMail &&
+        process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true" && !previewSafeSend) {
+      throw new AppAccessError("Bulk school email delivery is disabled in Neon Preview. Use the approved Sir JC evaluation test only.",503);
+    }
+    if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon") {
+      const session = await appSession(request);
+      requirePermission(session,"create_evaluations");
+      const submittedUrl = String(body?.evaluationUrl || "");
+      let parsed: URL;
+      try { parsed = new URL(submittedUrl); }
+      catch { throw new AppAccessError("Invalid evaluation link.",400); }
+      const requestUrl=new URL(request.url);
+      if(parsed.protocol!=="https:"||parsed.host!==requestUrl.host ||
+        !/^\/evaluate\/[a-zA-Z0-9]{10,40}$/.test(parsed.pathname)) {
+        throw new AppAccessError("Evaluation link must belong to this system.",403);
+      }
+      const token=parsed.pathname.split("/").pop() || "";
+      const found=await appPool().query("SELECT payload FROM se_evaluation_links WHERE token=$1",[token]);
+      const link=found.rows[0]?.payload as Record<string,any>|undefined;
+      if(!link||link.status!=="pending"||!link.po?.poNumber||!link.evaluatorEmail){
+        throw new AppAccessError("The evaluation link is unavailable or already completed.",409);
+      }
+      if (previewSafeSend) {
+        // Never trust a browser-supplied recipient, token, role or PO.
+        // Only Sir JC's existing pending Purchasing record for PO 32187.
+        const validRole=link.evaluatorRole==="purchaser" &&
+          String(link.po.poNumber).trim()==="32187" &&
+          String(link.evaluatorName).trim().toLowerCase()==="jc campit";
+        const validDocument=link.po.documentProvider==="google-drive" &&
+          (/^[A-Za-z0-9_-]{15,150}$/.test(String(link.po.documentFileId||"")) ||
+            (Array.isArray(link.po.documentPages) &&
+              link.po.documentPages.some((p:{fileId?:string})=>/^[A-Za-z0-9_-]{15,150}$/.test(String(p?.fileId||"")))));
+        if (!validRole || !validDocument ||
+            !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(String(link.evaluatorEmail).trim())) {
+          throw new AppAccessError("This recipient is not authorized for a single Purchasing Preview evaluation test.",403);
+        }
+        if (link.emailSentAt || link.lastEmailSentAt ||
+            link.emailSendStatus==="sent" || link.emailSendStatus==="sending") {
+          throw new AppAccessError("This Purchasing evaluation email was already sent or is processing. Do not send it twice.",409);
+        }
+      }
+      const expiry=typeof link.expiresAt==="string"?Date.parse(link.expiresAt):NaN;
+      if(Number.isFinite(expiry)&&expiry<=Date.now())throw new AppAccessError(
+        "This evaluation link has expired. Create a new link after authorization.",410);
+
+      // Disallow changing recipient, document URLs, PO metadata and link role
+      // through an untrusted browser request. Reconstruct from trusted SQL.
+      // Atomic per-link email claim: no concurrent or rapid repeat sends.
+      // One resend is allowed after the ten-minute cooldown.
+      const now=new Date();
+      const expiredSending=new Date(now.getTime()-2*60*1000).toISOString();
+      const cooldown=new Date(now.getTime()-10*60*1000).toISOString();
+      const sending=await appPool().query(
+        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() "+
+        "WHERE token=$1 AND link_status='pending' AND "+
+        "(COALESCE(payload->>'emailSendStatus','') <> 'sending' "+
+        "OR COALESCE(payload->>'emailSendingStartedAt','') < $3) AND "+
+        "(COALESCE(payload->>'lastEmailSentAt','') < $4) RETURNING token",
+        [token,JSON.stringify({emailSendStatus:"sending",emailSendingStartedAt:now.toISOString()}),
+         expiredSending,cooldown],
+      );
+      if(sending.rowCount!==1){
+        throw new AppAccessError("Email request is already processing or was sent recently. Please try later.",429);
+      }
+      claimedToken=token;
+      const storedPo=link.po as Record<string,any>;
+      body = {
+        name:link.evaluatorName||"Evaluator",
+        evaluatorRole:link.evaluatorRole||"requisitioner",
+        evaluatorName:link.evaluatorName||"Evaluator",
+        evaluatorEmail:link.evaluatorEmail,
+        requisitionerName:link.requisitionerName,
+        requisitionerEmail:link.requisitionerEmail,
+        amdName:link.amdName,amdEmail:link.amdEmail,
+        po:storedPo,
+        poDocumentUrl:storedPo.documentUrl,
+        poDocumentName:storedPo.documentName||String(storedPo.poNumber)+".pdf",
+        poDocuments:storedPo.documentPages||[{
+          url:storedPo.documentUrl,
+          fileId:storedPo.documentFileId,
+          name:storedPo.documentName||String(storedPo.poNumber)+".pdf",
+          mimeType:storedPo.documentMimeType,
+        }],
+        evaluationUrl:submittedUrl,
+        workspace:{name:link.workspaceName||"Southville International School and Colleges"},
+      };
+    }
     const {
       name,
       po,
@@ -191,8 +303,9 @@ export async function POST(request: Request) {
     const docs = Array.isArray(poDocuments) && poDocuments.length
       ? poDocuments
       : (poDocumentUrl ? [{ url: poDocumentUrl, name: poDocumentName || `${po.poNumber}.pdf`, mimeType: po.documentMimeType }] : []);
-    const attachments = docs.filter((doc: any) => doc?.url).map((doc: any, index: number) => ({
-      url: String(doc.url),
+    const attachments = docs.filter((doc: any) => doc?.fileId || doc?.url)
+      .map((doc: any, index: number) => ({
+      ...(doc?.fileId ? {fileId:String(doc.fileId)} : {url:String(doc.url)}),
       name: officialPoAttachmentName({
         poNumber: po.poNumber, index, originalName: doc.name,
         mimeType: doc.mimeType, url: doc.url,
@@ -212,8 +325,13 @@ export async function POST(request: Request) {
       return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, Math.round((end - start) / 86400000)) : null;
     })();
     const leadTimeText = leadTimeDays === null || leadTimeDays === undefined ? "—" : `${leadTimeDays} day${leadTimeDays === 1 ? "" : "s"}`;
-    const subject = `Supplier Evaluation Request | PO ${String(po.poNumber).replace(/[\r\n]/g, " ")} | ${label.replace(" Evaluation", "")}`;
+    const subject = (previewSafeSend ? "[PREVIEW TEST] " : "")+
+      `Supplier Evaluation Request | PO ${String(po.poNumber).replace(/[\r\n]/g, " ")} | ${label.replace(" Evaluation", "")}`;
     const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f4f5fb;font-family:Arial,Helvetica,sans-serif;color:#111827"><div style="max-width:700px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb"><div style="background:#4f247c;padding:22px 26px;color:#fff"><div style="font-size:11px;opacity:.78;text-transform:uppercase;letter-spacing:1px">${safeText(workspace?.name || "Southville International School and Colleges")}</div><div style="font-size:22px;font-weight:700;margin-top:5px">${label}</div><div style="font-size:12px;opacity:.75;margin-top:3px">PO ${safeText(po.poNumber)} · ${safeText(po.vendorName || "Supplier")}</div></div><div style="padding:26px"><p style="margin:0 0 14px">Hello <strong>${displayName}</strong>,</p><p style="line-height:1.6;margin:0 0 18px">Please review the attached official Purchase Order and complete your ${bodyLabel} supplier evaluation for this transaction. The attachment is the same official PO stored by the Purchasing Office.</p><table style="width:100%;border-collapse:collapse;margin:0 0 22px;background:#f8fafc;border:1px solid #e5e7eb"><tr><td style="padding:9px 12px;font-weight:700">PO Number</td><td style="padding:9px 12px">${safeText(po.poNumber)}</td></tr><tr><td style="padding:9px 12px;font-weight:700">PRF No.</td><td style="padding:9px 12px">${safeText(po.prfNumber || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Supplier</td><td style="padding:9px 12px">${safeText(po.vendorName || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Delivery Date</td><td style="padding:9px 12px">${safeText(po.expectedDate || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Received by</td><td style="padding:9px 12px">${safeText(po.receivedBy || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Delivery lead time</td><td style="padding:9px 12px">${safeText(leadTimeText)}</td></tr></table><div style="text-align:center;margin:26px 0"><a href="${String(evaluationUrl).replace(/"/g, '&quot;')}" style="display:inline-block;background:#2a895b;color:#fff;text-decoration:none;padding:13px 24px;border-radius:9px;font-weight:700">Open PO &amp; Complete Evaluation</a></div><p style="font-size:12px;color:#6b7280;line-height:1.55;margin:0">${role === "purchaser" ? "Purchasing / Buyer evaluations include the additional compliance criterion." : "This evaluation uses the four delivery/quality, price, timeliness, and after-sales criteria."} The unique link can be submitted once.</p></div></div></body></html>`;
+    const testHtml=previewSafeSend
+      ? html.replace('<div style="padding:26px"><p',
+          '<div style="padding:26px"><p style="background:#fff3cf;color:#674500;padding:12px;border-radius:8px;font-weight:700">PREVIEW TEST ONLY — This is not an official school evaluation.</p><p')
+      : html;
     const text = [
       `Hello ${targetName || "Evaluator"},`,
       `Please review the attached official Purchase Order and complete your ${bodyLabel} supplier evaluation for this transaction.`,
@@ -225,9 +343,21 @@ export async function POST(request: Request) {
       `Delivery lead time: ${leadTimeText}`,
       `Open PO & Complete Evaluation: ${evaluationUrl}`,
       "The official PO is attached. This evaluation link can be submitted once.",
-    ].join("\n\n");
+    ].join("\n\n") + (previewSafeSend
+      ? "\n\nPREVIEW TEST ONLY — This evaluation is not official school data." : "");
 
-    const sent = await sendViaAppsScript({ to: resolvedTo, subject, html, text, attachments });
+    const sent = await sendViaAppsScript({ to: resolvedTo, subject, html:testHtml, text, attachments });
+    if (claimedToken) {
+      const now=new Date().toISOString();
+      await appPool().query(
+        "UPDATE se_evaluation_links SET payload=payload || $2::jsonb || "+
+        "CASE WHEN COALESCE(payload->>'emailSentAt','')='' "+
+        "THEN jsonb_build_object('emailSentAt',$3::text) ELSE '{}'::jsonb END,"+
+        "imported_at=now() WHERE token=$1",
+        [claimedToken,JSON.stringify({emailSendStatus:"sent",
+          lastEmailSentAt:now,lastEmailRecipient:resolvedTo}),now],
+      );
+    }
     return NextResponse.json({
       ok: true,
       sent: true,
@@ -237,9 +367,19 @@ export async function POST(request: Request) {
       emailResolved: true,
       evaluatorRole: role,
       provider: "google-apps-script",
+      previewTest: previewSafeSend,
       providerMessage: sent?.message || "Email sent through Google Apps Script.",
     });
   } catch (error) {
-    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Unable to send evaluation email." }, { status: 500 });
+    if (claimedToken) {
+      try {
+        await appPool().query(
+          "UPDATE se_evaluation_links SET payload=payload || $2::jsonb,imported_at=now() WHERE token=$1",
+          [claimedToken,JSON.stringify({emailSendStatus:"failed"})],
+        );
+      } catch { /* Keep original send error */ }
+    }
+    const status = error instanceof AppAccessError ? error.status : 502;
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Unable to send evaluation email." }, { status });
   }
 }
