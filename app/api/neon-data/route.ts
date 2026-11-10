@@ -266,7 +266,8 @@ export async function POST(request: Request) {
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[workKey]);
         const existing=await client.query(
           "SELECT payload,link_status FROM se_evaluation_links "+
-          "WHERE evaluator_role=$1 AND link_status IN ('pending','submitted') "+
+          "WHERE (evaluator_role=$1 OR ($1='requisitioner' AND (evaluator_role='' OR evaluator_role IS NULL))) "+
+          "AND link_status IN ('pending','submitted') "+
           "AND (($2::text<>'' AND lower(btrim(COALESCE(payload->'po'->>'poNumber','')))=$2) "+
           "OR ($2::text='' AND $3::text<>'' AND lower(btrim(COALESCE(payload->'po'->>'prfNumber','')))=$3)) "+
           "ORDER BY CASE WHEN link_status='pending' THEN 0 ELSE 1 END, imported_at DESC LIMIT 1 FOR UPDATE",
@@ -288,7 +289,8 @@ export async function POST(request: Request) {
               [s(found.payload.token),JSON.stringify(retired)],
             );
           }else{
-            if(s(found.payload.evaluatorEmail).trim().toLowerCase()!==evaluatorEmail){
+            if(s(found.payload.evaluatorEmail).trim().toLowerCase()!==evaluatorEmail ||
+              s(found.payload.evaluatorName).trim().toLowerCase()!==evaluatorName.trim().toLowerCase()){
               throw new AppAccessError(
                 "An active evaluation link exists for a different recipient. Review the existing link before sending.",409);
             }
@@ -339,7 +341,11 @@ export async function POST(request: Request) {
         if(row.link_status!=="pending")throw new AppAccessError(
           "Only pending evaluation links can be replaced.",409);
         const po=object(row.payload.po);
-        if(row.evaluator_role!==expectedRole||
+        // Older imported links had an empty evaluator_role column and were
+        // implicitly Requisitioner links. Support explicit revocation only for
+        // that role, without loosening Buyer/AMD role checks.
+        const actualRole=row.evaluator_role||"requisitioner";
+        if(actualRole!==expectedRole||
           s(po.poNumber).trim().toLowerCase()!==expectedPo.toLowerCase()){
           throw new AppAccessError("Link does not belong to this PO and role.",409);
         }
