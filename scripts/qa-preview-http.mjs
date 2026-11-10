@@ -63,7 +63,7 @@ function vercelCliRequest(check) {
   // Explicit project/team selection avoids relying on a Cloud Shell local link.
   const argv=[
     "curl",check.path,"--deployment",ROOT,
-    "--","-sS","-o","/dev/null","-w","%{http_code}",
+    "--","-sS","-D","-","-o","/dev/null","-w","__QA_STATUS:%{http_code}",
     "-X",check.method,
   ];
   if(check.body){
@@ -96,12 +96,34 @@ function vercelCliRequest(check) {
             : "Vercel CLI invocation failed.";
     throw new Error(reason+" Confirm with: vercel curl /api/neon-pilot --deployment "+ROOT+" -- -sS -o /dev/null -w '%{http_code}'");
   }
-  const statusText=String(run.stdout||"").trim().match(/\b[1-5][0-9]{2}\s*$/)?.[0]?.trim();
-  const status=Number(statusText);
+  // Only parse safe status and Location fields. Never print raw cookies,
+  // authentication headers or redirect query parameters.
+  const output=String(run.stdout||"");
+  const matched=output.match(/__QA_STATUS:([1-5][0-9]{2})/);
+  const status=Number(matched?.[1]);
   if(!Number.isInteger(status)||status<100||status>599){
     throw new Error("Vercel CLI did not return a valid HTTP status.");
   }
-  return {status,location:null};
+  const headerBlock=output.split("__QA_STATUS:")[0];
+  const locations=[...headerBlock.matchAll(/^location:\\s*(.+)$/gim)];
+  const location=locations.length?locations[locations.length-1][1].trim():null;
+  return {status,location};
+}
+
+function redirectCategory(rawLocation){
+  if(!rawLocation)return "Redirect destination unavailable";
+  try{
+    const target=new URL(rawLocation,ROOT);
+    const hostname=target.hostname.toLowerCase();
+    const pathname=target.pathname.toLowerCase();
+    if(hostname==="vercel.com"||hostname.endsWith(".vercel.com")||
+      pathname.includes("auth")||pathname.includes("sso")||
+      pathname.includes("login"))
+      return "Vercel authentication / protected-preview redirect";
+    if(hostname===HOST)return "Same-site redirect requiring investigation";
+    if(hostname.endsWith(".vercel.app"))return "Vercel-hosted redirect requiring investigation";
+    return "External redirect requiring investigation";
+  }catch{return "Unexpected redirect format";}
 }
 
 async function main(){
@@ -119,22 +141,33 @@ async function main(){
       guardedLogin();return;
     }
   }
-  let passed=0,failed=0;
+  let passed=0,failed=0,blocked=0;
   for(const check of checks){
     try{
       const result=authenticated?vercelCliRequest(check):await rawRequest(check);
-      const success=result.status===check.expected;
-      console.log((success?"PASS":"FAIL")+" | "+check.name+
-        " | HTTP "+result.status+" (expected "+check.expected+")");
-      if(success)passed++;else failed++;
+      if(result.status===check.expected){
+        console.log("PASS | "+check.name+" | HTTP "+result.status+
+          " (expected "+check.expected+")");
+        passed++;
+      }else if(check.path==="/api/neon-pilot" &&
+        [301,302,303,307,308].includes(result.status)){
+        blocked++;
+        console.log("BLOCKED | "+check.name+" | HTTP "+result.status+
+          " | "+redirectCategory(result.location));
+      }else{
+        failed++;
+        console.log("FAIL | "+check.name+" | HTTP "+result.status+
+          " (expected "+check.expected+")");
+      }
     }catch(error){
+      failed++;
       console.log("FAIL | "+check.name+" | "+
         (error instanceof Error?error.message:"Request failed"));
-      failed++;
     }
   }
-  console.log("Preview HTTP QA summary:",passed,"PASS;",failed,"FAIL; total:",checks.length);
+  console.log("Preview HTTP QA summary:",passed,"PASS;",failed,"FAIL;",blocked,"BLOCKED; total:",checks.length);
   console.log("No authorized record changes, school email deliveries, or Sheet writes were attempted.");
   if(failed)process.exitCode=1;
+  else if(blocked)process.exitCode=2;
 }
 await main();
