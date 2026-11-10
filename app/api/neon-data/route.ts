@@ -246,6 +246,9 @@ export async function POST(request: Request) {
       const po=object(input.po);
       const poNumber=s(po.poNumber).trim(),prfNumber=s(po.prfNumber).trim();
       if(!poNumber&&!prfNumber)throw new AppAccessError("A PO or PRF number is required.",400);
+      if(poNumber.length>100||prfNumber.length>100){
+        throw new AppAccessError("The PO/PRF number is too long.",400);
+      }
       const role=["purchaser","amd_personnel","requisitioner"].includes(s(input.evaluatorRole))
         ? s(input.evaluatorRole):"requisitioner";
       const evaluatorName=s(input.evaluatorName)||
@@ -256,7 +259,7 @@ export async function POST(request: Request) {
       if(!/^[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]+$/.test(evaluatorEmail)){
         throw new AppAccessError("A verified evaluator email is required before creating a link.",400);
       }
-      const workKey=[poNumber.toLowerCase(),prfNumber.toLowerCase(),role].join("|");
+      const workKey=[poNumber.toLowerCase()||"PRF:"+prfNumber.toLowerCase(),role].join("|");
       // This lock serializes simultaneous requests for the same PO/PRF + role
       // without changing any historical Firestore snapshot or table schema.
       result=await transaction(db,async(client)=>{
@@ -264,8 +267,8 @@ export async function POST(request: Request) {
         const existing=await client.query(
           "SELECT payload,link_status FROM se_evaluation_links "+
           "WHERE evaluator_role=$1 "+
-          "AND lower(btrim(COALESCE(payload->'po'->>'poNumber','')))=$2 "+
-          "AND lower(btrim(COALESCE(payload->'po'->>'prfNumber','')))=$3 "+
+          "AND (($2::text<>'' AND lower(btrim(COALESCE(payload->'po'->>'poNumber','')))=$2) "+
+          "OR ($2::text='' AND $3::text<>'' AND lower(btrim(COALESCE(payload->'po'->>'prfNumber','')))=$3)) "+
           "ORDER BY CASE WHEN link_status='pending' THEN 0 ELSE 1 END, imported_at DESC LIMIT 1 FOR UPDATE",
           [role,poNumber.toLowerCase(),prfNumber.toLowerCase()],
         );
