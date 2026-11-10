@@ -781,7 +781,11 @@ function EvaluationEditor({ value, onCancel, onSave, supplierDirectory }: { valu
     setLiveLoading(true);
     setLiveError("");
     try {
-      const response = await fetch("/api/po-lookup", { cache: "no-store" });
+      const user=neonEnabled()?await signInToFirebase():null;
+      const authToken=user?await user.getIdToken():null;
+      const response = await fetch("/api/po-lookup", {
+        cache:"no-store",headers:authToken?{Authorization:"Bearer "+authToken}:{},
+      });
       const data = await response.json();
       if (!response.ok || !data?.ok) {
         throw new Error(data?.message || "Live Google Sheet lookup is unavailable.");
