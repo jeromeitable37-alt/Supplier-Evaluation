@@ -162,7 +162,10 @@ export async function POST(request: Request) {
       process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
       process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true" &&
       body?.previewPurchasingRequest === "SEND_JC_PREVIEW_EVALUATION_32187";
+    const approvedProductionMail=process.env.VERCEL_ENV==="production" &&
+      process.env.NEXT_PUBLIC_DATA_BACKEND==="neon";
     if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+        !approvedProductionMail &&
         process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true" && !previewSafeSend) {
       throw new AppAccessError("Bulk school email delivery is disabled in Neon Preview. Use the approved Sir JC evaluation test only.",503);
     }
