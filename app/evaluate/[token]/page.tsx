@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FileImage, FileText, Loader2, Star, XCircle } from "lucide-react";
+import { CheckCircle2, FileImage, FileText, Loader2, Moon, Star, Sun, XCircle } from "lucide-react";
 import { createPublicRequisitionerEvaluation, getPublicEvaluationLink, type PublicEvaluationLink } from "../../../lib/firestore";
 import { neonEnabled } from "../../../lib/neonClient";
 import PrivatePoAttachment from "../../../components/PrivatePoAttachment";
@@ -59,6 +59,23 @@ export default function EvaluationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [pageTheme, setPageTheme] = useState<"light" | "dark">("light");
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("supplier-theme");
+    const preferred = stored === "light" || stored === "dark"
+      ? stored
+      : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    setPageTheme(preferred);
+    document.documentElement.dataset.theme = preferred;
+  }, []);
+
+  const togglePageTheme = () => {
+    const next = pageTheme === "dark" ? "light" : "dark";
+    setPageTheme(next);
+    document.documentElement.dataset.theme = next;
+    window.localStorage.setItem("supplier-theme", next);
+  };
 
   useEffect(() => {
     if (!token) return;
@@ -173,32 +190,46 @@ export default function EvaluationPage() {
     {neonEnabled() && <div role="status" style={{ padding: "12px 16px", marginBottom: 16, borderRadius: 9, border: "1px solid #e0b45e", background: "#fff5dd", color: "#624514", fontWeight: 600, fontSize: 13 }}>
       TEST VERSION — Responses submitted here are for testing only and are not official evaluations.
     </div>}
-    <section className="public-eval-header"><div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div><div><small>{link.workspaceName || "Southville International School and Colleges"}</small><h1>Supplier Evaluation</h1><p>{evaluatorLabel} · Supplier performance review</p></div></section>
+    <section className="public-eval-header">
+      <div className="public-eval-logo"><img src="/sisc-logo.png" alt="Southville International School and Colleges"/></div>
+      <div className="public-eval-brand">
+        <small>{link.workspaceName || "Southville International School and Colleges"}</small>
+        <h1>Supplier Evaluation</h1>
+        <p>{evaluatorLabel} · Supplier performance review</p>
+      </div>
+      <button type="button" className="public-theme-toggle"
+        onClick={togglePageTheme}
+        aria-label={pageTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        aria-pressed={pageTheme === "dark"}>
+        {pageTheme === "dark" ? <Sun size={17}/> : <Moon size={17}/>}
+        {pageTheme === "dark" ? "Light mode" : "Dark mode"}
+      </button>
+    </section>
     <section className="public-po-summary"><div><span>PO Number</span><strong>{po.poNumber}</strong></div><div><span>Supplier</span><strong>{po.vendorName || "—"}</strong></div><div><span>PRF No.</span><strong>{po.prfNumber || "—"}</strong></div><div><span>Delivery Date</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Total Amount</span><strong>{displayTotal > 0 ? moneyText(displayTotal) : "—"}</strong></div><div><span>Requisitioner</span><strong>{po.requisitioner || link.requisitionerName || "—"}</strong></div></section>
     <section className="public-delivery-strip"><div><span>Expected delivery</span><strong>{po.expectedDate || "—"}</strong></div><div><span>Actual delivery</span><strong>{po.actualDeliveryDate || "—"}</strong></div><div><span>Delivery lead time</span><strong>{leadTimeDays !== null ? `${leadTimeDays} day${leadTimeDays === 1 ? "" : "s"}` : "—"}</strong></div><div><span>PO status</span><strong>{po.status || "Pending"}</strong></div><div><span>Received by</span><strong>{po.receivedBy || "—"}</strong></div></section>
 
-    <section className="public-po-pricing" style={{ background: "#ffffff", border: "1px solid #dfe9e6", borderRadius: 14, marginBottom: 18, overflow: "hidden", boxShadow: "0 3px 14px rgba(15, 23, 42, 0.04)" }}>
-      <div style={{ padding: "15px 18px", borderBottom: "1px solid #e8efed", display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div><b style={{ display: "block", fontSize: 14, lineHeight: 1.25, color: "#0f172a" }}>Purchase Details and Pricing</b><small style={{ display: "block", marginTop: 4, color: "#64748b", fontSize: 11, lineHeight: 1.45 }}>Review the purchase information before rating the supplier.</small></div>
-        <div style={{ textAlign: "right" }}><strong style={{ display: "block", color: "#0f766e", fontSize: 16, lineHeight: 1.2, whiteSpace: "nowrap" }}>{displayTotal > 0 ? moneyText(displayTotal) : "Price not recorded"}</strong><small style={{ display: "block", marginTop: 4, color: "#94a3b8", fontSize: 10 }}>{displayTotal > 0 ? "Recorded purchase amount" : "Amount pending confirmation"}</small></div>
+    <section className="public-po-pricing">
+      <div className="public-po-pricing-head">
+        <div><b className="public-po-pricing-title">Purchase Details and Pricing</b><small className="public-po-pricing-hint">Review the purchase information before rating the supplier.</small></div>
+        <div className="public-po-pricing-total"><strong>{displayTotal > 0 ? moneyText(displayTotal) : "Price not recorded"}</strong><small>{displayTotal > 0 ? "Recorded purchase amount" : "Amount pending confirmation"}</small></div>
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead><tr style={{ background: "#f8fafc" }}>{["Qty", "Unit", "Item / Description", "Unit Price", "Line Total"].map((head) => <th key={head} style={{ padding: "9px 12px", textAlign: head === "Item / Description" ? "left" : "right", color: "#64748b", fontSize: 9.5, lineHeight: 1.2, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".05em", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{head}</th>)}</tr></thead>
+      <div className="public-po-pricing-scroll">
+        <table className="public-po-pricing-table">
+          <thead><tr>{["Qty", "Unit", "Item / Description", "Unit Price", "Line Total"].map((head) => <th key={head} className={head === "Item / Description" ? "description" : "number"}>{head}</th>)}</tr></thead>
           <tbody>
             {itemAmounts.filter((item) => item.description || item.qty || item.unitPrice || item.lineTotal).map((item, index) => <tr key={`${item.line}-${index}`}>
-              <td style={{ padding: "9px 12px", textAlign: "right", borderBottom: "1px solid #f1f5f9", color: "#334155" }}>{item.qty || "—"}</td>
-              <td style={{ padding: "9px 12px", textAlign: "right", borderBottom: "1px solid #f1f5f9", color: "#334155" }}>{item.unit || "—"}</td>
-              <td style={{ padding: "9px 12px", borderBottom: "1px solid #f1f5f9", color: "#0f172a" }}>{item.description || "—"}</td>
-              <td style={{ padding: "9px 12px", textAlign: "right", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap", color: "#0f766e", fontWeight: 600 }}>{item.unitPrice > 0 ? moneyText(item.unitPrice) : "—"}</td>
-              <td style={{ padding: "9px 12px", textAlign: "right", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap", color: "#0f172a", fontWeight: 700 }}>{item.lineTotal > 0 ? moneyText(item.lineTotal) : "—"}</td>
+              <td className="number">{item.qty || "—"}</td>
+              <td className="number">{item.unit || "—"}</td>
+              <td className="description">{item.description || "—"}</td>
+              <td className="number price">{item.unitPrice > 0 ? moneyText(item.unitPrice) : "—"}</td>
+              <td className="number total">{item.lineTotal > 0 ? moneyText(item.lineTotal) : "—"}</td>
             </tr>)}
-            {!itemAmounts.some((item) => item.description || item.qty || item.unitPrice || item.lineTotal) && <tr><td colSpan={5} style={{ padding: 18, textAlign: "center", color: "#94a3b8", fontSize: 11 }}>No item pricing has been recorded yet.</td></tr>}
+            {!itemAmounts.some((item) => item.description || item.qty || item.unitPrice || item.lineTotal) && <tr><td colSpan={5} className="public-po-pricing-empty">No item pricing has been recorded yet.</td></tr>}
           </tbody>
         </table>
       </div>
-      <div style={{ display: "flex", justifyContent: "flex-end", padding: "12px 18px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-        <div style={{ minWidth: 230, display: "flex", justifyContent: "space-between", gap: 28, fontSize: 12.5 }}><span style={{ color: "#64748b" }}>Total Amount</span><b style={{ color: "#0f172a", fontSize: 14 }}>{displayTotal > 0 ? moneyText(displayTotal) : "—"}</b></div>
+      <div className="public-po-pricing-footer">
+        <div><span>Total Amount</span><b>{displayTotal > 0 ? moneyText(displayTotal) : "—"}</b></div>
       </div>
     </section>
 
@@ -226,9 +257,9 @@ export default function EvaluationPage() {
 
     {submitted ? <section className="public-eval-success"><CheckCircle2 size={50}/><h2>Evaluation Submitted</h2><p>Thank you, {evaluatorName}. Your supplier evaluation for <strong>{po.poNumber}</strong> has been recorded in the system.</p>
     {syncWarning && <p style={{ color: "#9a3412", fontSize: 12 }}>{syncWarning}</p>}</section> : <><section className="public-eval-intro"><div><span className="eyebrow-dot"/><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", lineHeight: 1.2 }}>SUPPLIER PERFORMANCE REVIEW</span></div><h2 style={{ fontSize: 24, lineHeight: 1.15, margin: "8px 0 6px" }}>{evaluatorLabel} Evaluation</h2><p>Rate each criterion from 1 (Poor) to 5 (Excellent). Check the purchase information above before submitting.</p></section><section className="public-eval-criteria">{activeCriteria.map(([id, title, desc]) => <div className={`public-criterion ${scores[id] ? "rated" : ""}`} key={id}><div><h3>{title}</h3><p>{desc}</p></div><div className="public-stars">{[1,2,3,4,5].map((n) => <button type="button" key={n} onClick={() => setScores((prev) => ({ ...prev, [id]: n }))} aria-label={`${title}: ${labels[n-1]}`} className={scores[id] && n <= scores[id] ? "active" : ""}><Star size={27} fill="currentColor"/></button>)}</div>{scores[id] ? <small>{scores[id]} / 5 — {labels[scores[id] - 1]}</small> : <small>Not rated</small>}
-        {scores[id] > 0 && scores[id] < 4 && <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#334155" }}>
+        {scores[id] > 0 && scores[id] < 4 && <label className="public-rating-reason">
           Reason for rating below 4 (required)
-          <textarea style={{ width: "100%", marginTop: 6, minHeight: 70, border: "1px solid #cbd5e1", borderRadius: 8, padding: 10 }}
+          <textarea className="public-rating-textarea"
             value={ratingRemarks[id] || ""}
             onChange={(e) => setRatingRemarks((previous) => ({ ...previous, [id]: e.target.value }))}
             placeholder="Please explain what happened for this criterion." />
