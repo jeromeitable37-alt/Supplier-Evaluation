@@ -39,6 +39,11 @@ function doPost(e) {
     if (action === 'sync_evaluation') {
       return siscWebhookJson_(siscIsoSyncEvaluation_(request));
     }
+    if (action === 'read_sheet_rows') {
+      // The existing shared secret has already been verified above.
+      // This read-only action is restricted to approved school tab names.
+      return siscWebhookJson_(siscPrivateSheetRead_(request, props));
+    }
     if (action === 'upload_po') {
       return siscWebhookJson_(siscDriveUploadPo_(request));
     }
