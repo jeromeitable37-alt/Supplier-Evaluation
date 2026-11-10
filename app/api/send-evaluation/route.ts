@@ -138,6 +138,20 @@ async function sendViaAppsScript(input: {
   return data;
 }
 
+/** Public read-only capability status. Never expose school credentials. */
+export async function GET(){
+  const neonPreview=process.env.NEXT_PUBLIC_DATA_BACKEND==="neon";
+  const approved= !neonPreview ||
+    process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED==="true";
+  const configured=Boolean(process.env.GOOGLE_APPS_SCRIPT_EMAIL_URL&&
+    (process.env.PMS_WEBHOOK_SECRET||process.env.GOOGLE_APPS_SCRIPT_SECRET));
+  return NextResponse.json({ok:true,enabled:approved&&configured,
+    reason:approved?(configured?"ready":"school-webhook-unconfigured"):"preview-safety-lock",
+    delivery:"school-apps-script"},{
+    headers:{"Cache-Control":"no-store"},
+  });
+}
+
 export async function POST(request: Request) {
   if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
       process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true") {
