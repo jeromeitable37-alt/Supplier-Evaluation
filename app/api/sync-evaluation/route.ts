@@ -75,6 +75,7 @@ async function readDoc(sa: SA, token: string, collection: string, id: string): P
  */
 export async function POST(request: Request) {
   if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+      process.env.VERCEL_ENV !== "production" &&
       process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true") {
     return NextResponse.json({ok:false,message:"School Sheet synchronization is disabled in Neon Preview until an approved test is configured."},{status:503});
   }
