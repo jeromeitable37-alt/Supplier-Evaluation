@@ -37,6 +37,7 @@ import PurchaseOrderGenerator from "../components/PurchaseOrderGenerator";
 import { neonEnabled } from "../lib/neonClient";
 import AdvancedDashboard from "../components/AdvancedDashboard";
 import AdvancedReports from "../components/AdvancedReports";
+import NeonSheetSyncStatus from "../components/NeonSheetSyncStatus";
 import {
   Activity,
   ChevronDown,
@@ -1131,8 +1132,66 @@ function Reports({ records, monthly }: { records: Evaluation[]; monthly: any[] }
 }
 function Rule({ min, label }: { min: string; label: string }) { return <div className="rule"><span>{min}+</span><b>{label}</b></div>; }
 
-function DataCenter({ records, onImport, onExport, onClear, onRefresh }: { records: Evaluation[]; onImport: () => void; onExport: () => void; onClear: () => void; onRefresh: () => void }) {
-  return <div><div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-dot" /> DATA MANAGEMENT</div><h1>Data Center</h1><p>Excel is now optional. The website is your working database, with import and export when you need it.</p></div></div><div className="data-hero"><div className="data-icon"><Database size={24}/></div><div><b>{records.length.toLocaleString()} evaluations currently stored</b><p>Records are stored in Firebase Firestore, so your Vercel site can use the same supplier database from multiple devices.</p></div><span className="data-status"><span/> Ready</span></div><div className="data-cards"><DataCard icon={<Upload size={20}/>} title="Import existing Excel" text="Bring your current DATABASE sheet into the website without typing it again." action="Choose Excel" onClick={onImport}/><DataCard icon={<Download size={20}/>} title="Export to Excel" text="Download the website database as a clean Supplier Evaluations workbook." action="Export workbook" onClick={onExport}/><DataCard icon={<RefreshCw size={20}/>} title="Reload workspace" text="Reload the current browser session and refresh the dashboard data." action="Reload app" onClick={onRefresh}/></div><div className="panel warning-panel"><AlertCircle size={19}/><div><b>Important for Vercel deployment</b><p>Firebase is now the source of truth. The same records can be reviewed from your laptop, phone, and Vercel deployment.</p></div></div><div className="panel danger-panel"><div><b>Clear cloud database</b><p>This removes all stored evaluations from this browser.</p></div><button className="btn danger-outline" onClick={onClear}><Trash2 size={15}/> Clear all</button></div></div>;
+function DataCenter({ records, onImport, onExport, onClear, onRefresh }: {
+  records: Evaluation[];
+  onImport: () => void; onExport: () => void;
+  onClear: () => void; onRefresh: () => void;
+}) {
+  const isNeon=neonEnabled();
+  return <div>
+    <div className="page-heading"><div>
+      <div className="eyebrow"><span className="eyebrow-dot" /> DATA MANAGEMENT</div>
+      <h1>Data Center</h1>
+      <p>Manage current supplier evaluations, view school Sheet delivery status,
+        and export an ISO review workbook.</p>
+    </div></div>
+    <div className="data-hero">
+      <div className="data-icon"><Database size={24}/></div>
+      <div><b>{records.length.toLocaleString()} evaluations currently stored</b>
+        <p>{isNeon
+          ? "This Preview uses secured Neon PostgreSQL. The official Production system still uses Firebase until an approved cutover."
+          : "Records are stored in Firebase Firestore and shared across your authorized devices."}</p>
+      </div>
+      <span className="data-status"><span/> {isNeon?"Preview":"Ready"}</span>
+    </div>
+    {isNeon&&<NeonSheetSyncStatus/>}
+    <div className="data-cards">
+      {!isNeon&&<DataCard icon={<Upload size={20}/>} title="Import existing Excel"
+        text="Bring your current DATABASE sheet into the website without typing it again."
+        action="Choose Excel" onClick={onImport}/>}
+      <DataCard icon={<Download size={20}/>} title="Export to Excel"
+        text="Download the website database for your authorized purchasing records."
+        action="Export workbook" onClick={onExport}/>
+      <DataCard icon={<RefreshCw size={20}/>} title="Reload workspace"
+        text="Refresh the dashboard and current supplier evaluations."
+        action="Reload app" onClick={onRefresh}/>
+    </div>
+    {isNeon?
+      <div className="panel warning-panel">
+        <ShieldCheck size={19}/>
+        <div><b>Protected school migration Preview</b>
+          <p>Bulk import and Clear All are intentionally blocked while the
+            1,430 original records are being reconciled. Only authorized
+            Preview testing is permitted.</p>
+        </div>
+      </div>:
+      <>
+        <div className="panel warning-panel"><AlertCircle size={19}/>
+          <div><b>Current Production source of truth</b>
+            <p>Firebase remains the live database until complete Neon QA
+              and a school-approved migration.</p>
+          </div>
+        </div>
+        <div className="panel danger-panel">
+          <div><b>Clear cloud database</b>
+            <p>This permanently removes all stored evaluations. Back up the data first.</p>
+          </div>
+          <button className="btn danger-outline" onClick={onClear}>
+            <Trash2 size={15}/> Clear all
+          </button>
+        </div>
+      </>}
+  </div>;
 }
 function DataCard({ icon, title, text, action, onClick }: { icon: React.ReactNode; title: string; text: string; action: string; onClick: () => void }) { return <div className="data-card"><div className="data-card-icon">{icon}</div><b>{title}</b><p>{text}</p><button onClick={onClick}>{action} →</button></div>; }
 
@@ -1143,9 +1202,9 @@ function SettingsView({ settings, setSettings, onClear, theme, setTheme, user, a
     <div className="settings-section"><div><b>Brand color</b><p>Pick the accent used throughout the purchasing workspace.</p></div><div className="accent-palette">{[["emerald","Emerald"],["indigo","Indigo"],["blue","Blue"],["violet","Violet"],["amber","Amber"]].map(([value,label]) => <button key={value} className={`accent-choice ${accent === value ? "selected" : ""} accent-${value}`} onClick={() => setAccent(value)}><i />{label}</button>)}</div></div>
     <div className="settings-section"><div><b>Account</b><p>Your current Firebase Authentication account.</p></div><div className="storage-callout"><ShieldCheck size={18}/><div><b>Signed in securely</b><span>{user?.email || "Firebase user"}</span></div></div><button className="btn ghost" onClick={() => signOutFirebase()}>Sign out</button></div>
     {profile && <div className="settings-section"><div><b>Profile</b><p>Keep your staff or administrator profile current.</p></div><div className="profile-mini"><div className="profile-mini-avatar">{(profile.displayName || profile.email || "U").slice(0,1).toUpperCase()}</div><div><b>{profile.displayName}</b><span>{profile.jobTitle} · {profile.role}</span></div></div><button className="btn secondary" onClick={onOpenProfile}>Open profile</button></div>}
-    <div className="settings-section"><div><b>Storage</b><p>Evaluations are stored in Firebase Firestore. Excel remains available for import, export, and backup.</p></div><div className="storage-callout"><Database size={18}/><div><b>Firebase Firestore</b><span>Cloud database · shared across devices</span></div></div></div>
+    <div className="settings-section"><div><b>Storage</b><p>{neonEnabled() ? "Preview evaluations are stored in Neon PostgreSQL. The official live system remains on Firebase until approved migration." : "Evaluations are stored in Firebase Firestore. Excel remains available for import, export, and backup."}</p></div><div className="storage-callout"><Database size={18}/><div><b>{neonEnabled() ? "Neon PostgreSQL (Preview)" : "Firebase Firestore"}</b><span>Cloud database · authorized school records</span></div></div></div>
     <div className="settings-section"><div><b>AI scanning</b><p>For Vercel, add <code>OPENAI_API_KEY</code> as a server-side environment variable. The browser never receives the secret key.</p></div><div className="security-note"><ShieldCheck size={18}/><span>Keep API keys only in Vercel/Firebase project configuration.</span></div></div>
-    <div className="settings-section danger-section"><div><b>Danger zone</b><p>Delete every evaluation from your Firebase database.</p></div><button className="btn danger-outline" onClick={onClear}><Trash2 size={15}/> Clear cloud data</button></div>
+    <div className="settings-section danger-section"><div><b>Danger zone</b><p>{neonEnabled() ? "Bulk deletion is disabled in Neon Preview." : "Delete every evaluation from your Firebase database."}</p></div>{!neonEnabled()&&<button className="btn danger-outline" onClick={onClear}><Trash2 size={15}/> Clear cloud data</button>}</div>
   </div></div>;
 }
 
