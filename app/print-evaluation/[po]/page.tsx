@@ -125,7 +125,10 @@ export default function PrintEvaluationPage() {
 
   if (loading) return <main style={{ padding: 28 }}>Loading recorded evaluations…</main>;
   if (error) return <main style={{ padding: 28 }}>Unable to open this report: {error}</main>;
-  if (!matched.length) return <main style={{ padding: 28 }}>No submitted evaluation is available for PO {poNumber}.</main>;
+  if (!matched.length && !po) return <main style={{ padding: 28 }}>
+    No stored purchase order or submitted supplier evaluation was found for PO {poNumber}.
+    Return to PO Storage and save the PO first.
+  </main>;
 
   return <div className="iso-print-page">
     <div className="iso-toolbar">
@@ -140,12 +143,23 @@ export default function PrintEvaluationPage() {
       </header>
       <div className="iso-code"><span>SISC/EOMSF-PUR-006 · REV.000 6/29/26</span><span>Evaluation Date: <b>{asText(source?.evaluationDate || source?.submittedAt).slice(0, 10) || "—"}</b></span></div>
       {!full && <div className="iso-draft">INCOMPLETE RECORD — DO NOT FILE AS A FULLY APPROVED EVALUATION</div>}
-      <table className="iso-info"><tbody>
-        <tr><th>COMPANY NAME</th><td>{asText(po?.vendorName || source?.supplier) || "—"}</td></tr>
-        <tr><th>ADDRESS</th><td>{asText(po?.vendorAddress || source?.address) || "—"}</td></tr>
-        <tr><th>ITEM DELIVERED</th><td>{itemDetails || "—"}</td></tr>
-        <tr><th>PO / PRF NUMBER</th><td>{poNumber} / {asText(po?.prfNumber || source?.prfNo) || "—"}</td></tr>
-      </tbody></table>
+      <div className="iso-detail-grid">
+        <table className="iso-detail"><tbody>
+          <tr><th>Company Name:</th><td>{asText(po?.vendorName || source?.supplier) || "—"}</td></tr>
+          <tr><th>Address:</th><td>{asText(po?.vendorAddress || source?.address) || "—"}</td></tr>
+          <tr><th>Item/s Delivered:</th><td>{itemDetails || "—"}</td></tr>
+        </tbody></table>
+        <table className="iso-detail"><tbody>
+          <tr><th>PRF No.:</th><td>{asText(po?.prfNumber || source?.prfNo) || "—"}</td></tr>
+          <tr><th>PO Number:</th><td>{poNumber}</td></tr>
+          <tr><th>Remarks:</th><td>{asText(source?.remarks || po?.notes) || "—"}</td></tr>
+        </tbody></table>
+        <table className="iso-detail"><tbody>
+          <tr><th colSpan={2} className="iso-detail-title">Requisitioner Details</th></tr>
+          <tr><th>Requisitioner Name:</th><td>{asText(po?.requisitioner || selected.requisitioner?.evaluatorName) || "—"}</td></tr>
+          <tr><th>Email Address:</th><td>{asText(po?.requisitionerEmail || selected.requisitioner?.evaluatorEmail) || "—"}</td></tr>
+        </tbody></table>
+      </div>
       <table className="iso-criteria"><thead><tr>
         <th style={{ width: "36%" }}>CRITERIA</th><th>Purchasing</th><th>Requisitioner</th><th>AMD</th>
         <th style={{ width: "30%" }}>REMARKS — Reasons for items rated below 4</th>
@@ -182,7 +196,8 @@ export default function PrintEvaluationPage() {
         <div><b>NOTED BY:</b><div className="iso-signline"/>Next Level Head / Manager</div>
         <div><b>APPROVED BY:</b><div className="iso-signline"/>President</div>
       </div>
-      <h2 className="iso-cs-title">CUSTOMER SATISFACTION RATING</h2>
+      <section className="iso-customer-section">
+        <h2 className="iso-cs-title">CUSTOMER SATISFACTION RATING</h2>
       <p className="iso-cs-note">To be filled out by the requisitioner after completion of delivery — Purchasing Office service</p>
       <table className="iso-cs"><thead><tr><th>Criteria (5 highest; 1 poor)</th><th>Rating</th><th>Comments and Suggestions</th></tr></thead>
         <tbody>
@@ -194,7 +209,10 @@ export default function PrintEvaluationPage() {
         <div><b>EVALUATED BY:</b><small>{asText(satisfaction.evaluatedBy || selected.requisitioner?.evaluatorName) || "Pending"}</small><div className="iso-signline"/>Name and Signature of Requisitioner</div>
         <div><b>EVALUATED BY:</b><div className="iso-signline"/>Next Level Head / Manager</div>
       </div>
-      <footer>System-generated ISO filing copy • Signatures and approval must be completed by authorized personnel • PO {poNumber}</footer>
+      </section>
+      <footer>System-generated filing copy based on the Southville Supplier Evaluation worksheet.
+        Document Control must verify the controlled revision and authorized signatories before official use.
+        PO {poNumber}</footer>
     </article>
     <style>{`
       .iso-print-page{min-height:100vh;background:#e7e8ed;padding:20px;font-family:Arial,sans-serif;color:#101010}
@@ -204,11 +222,18 @@ export default function PrintEvaluationPage() {
       .iso-heading{display:flex;border:1px solid #000;align-items:center;text-align:center}.iso-heading img{width:74px;height:70px;object-fit:contain;border-right:1px solid #000;padding:7px}.iso-heading>div{flex:1}.iso-heading strong{font-size:13px}.iso-heading h1{font-size:15px;margin:8px 0 4px}
       .iso-code{display:flex;justify-content:space-between;border:1px solid #000;border-top:0;padding:5px 7px;font-size:10px}.iso-draft{font:700 11px Arial,sans-serif;letter-spacing:.04em;color:#9a3412;text-align:center;border:1px dashed #9a3412;padding:5px;margin:7px 0}
       .iso-paper table{width:100%;border-collapse:collapse;table-layout:fixed}.iso-paper th,.iso-paper td{border:1px solid #000;padding:5px;overflow-wrap:anywhere;vertical-align:top}
-      .iso-info th{width:28%;text-align:right;font-weight:500}.iso-info td{height:18px}
+      .iso-detail-grid{display:grid;grid-template-columns:1.34fr 1fr 1.2fr;gap:0;border-left:1px solid #000;border-bottom:1px solid #000}
+      .iso-detail{border-collapse:collapse;width:100%;table-layout:fixed;min-width:0}
+      .iso-detail th,.iso-detail td{padding:6px 5px;border:0;border-right:1px solid #000;border-top:1px solid #000;vertical-align:top;font-size:10px;overflow-wrap:anywhere}
+      .iso-detail th{font-weight:600;width:39%}.iso-detail td{width:61%;min-height:20px}
+      .iso-detail-title{background:#f6f6f6;text-align:center;font-weight:700!important;width:100%!important}
+      .iso-detail tr:nth-child(2) td,.iso-detail tr:nth-child(3) td{height:27px}
       .iso-criteria{margin-top:10px}.iso-criteria thead th{text-align:center}.iso-center{text-align:center}.iso-comment{font-size:10px}.iso-average th{text-align:right}.iso-rubrics{display:grid;grid-template-columns:2fr 1.2fr;gap:20px;margin-top:14px}.iso-rubrics h2{font-size:11px;margin:0 0 4px}.iso-rubrics th{width:19%}.iso-rubrics td{font-size:9px}.iso-note{font-size:9px;margin:10px 0 14px}
       .iso-signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;break-inside:avoid}.iso-signatures>div:first-child{grid-column:1/-1;width:35%;margin-bottom:3px}.iso-signatures>div{min-height:52px}.iso-signatures small,.iso-cs-signs small{display:block;margin-top:4px}.iso-signline{border-bottom:1px solid black;height:25px;margin:0 0 3px}
+      .iso-customer-section{margin-top:18px;padding-top:9px;border-top:1px solid #000;break-inside:avoid;page-break-inside:avoid}
+      .iso-criteria tr,.iso-rubrics,.iso-signatures{break-inside:avoid;page-break-inside:avoid}
       .iso-cs-title{text-align:center;margin:19px 0 4px;font-size:13px}.iso-cs-note{text-align:center;font-size:10px}.iso-cs th:first-child{width:38%}.iso-cs th:nth-child(2){width:16%}.iso-cs td{height:31px}.iso-cs-signs{display:grid;grid-template-columns:1fr 1fr;gap:45px;margin-top:16px}.iso-cs-signs>div{min-height:68px}.iso-paper footer{font-size:9px;text-align:center;margin-top:17px;color:#555}
-      @media print{@page{size:letter;margin:0.35in}.iso-print-page{background:#fff;padding:0}.iso-toolbar{display:none}.iso-paper{box-shadow:none;padding:0;width:auto;max-width:none;min-height:0}.iso-print-page,.iso-paper{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+      @media print{@page{size:letter;margin:0.35in}.iso-print-page{background:#fff;padding:0}.iso-toolbar{display:none}.iso-paper{box-shadow:none;padding:0;width:auto;max-width:none;min-height:0}.iso-paper table{font-size:10px}.iso-detail th,.iso-detail td{font-size:9px}.iso-customer-section{break-before:page;page-break-before:always;margin-top:0;border-top:0;padding-top:8px}.iso-print-page,.iso-paper{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
     `}</style>
   </div>;
 }
