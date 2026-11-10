@@ -33,7 +33,7 @@ import {
 } from "../lib/firestore";
 import { readPrivatePoChunks } from "../lib/privatePoReader";
 import { auth } from "../lib/firebase";
-import { neonEnabled } from "../lib/neonClient";
+import { neonEnabled, neonWrite } from "../lib/neonClient";
 
 export type PurchaseOrderSheetMatch = {
   poNumber: string;
@@ -242,6 +242,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const [schoolEmailEnabled, setSchoolEmailEnabled] = useState(false);
   const [schoolDriveMessage, setSchoolDriveMessage] = useState("");
   const [schoolDriveChecking, setSchoolDriveChecking] = useState(false);
+  const [replacingLink, setReplacingLink] = useState(false);
 
   const [privatePoPreview, setPrivatePoPreview] = useState("");
   const [privatePoLoading, setPrivatePoLoading] = useState(false);
@@ -588,6 +589,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       items: saved?.items?.length ? saved.items : items,
       documentProvider: saved?.documentProvider,
       documentPages: saved?.documentPages,
+      documentFileId: saved?.documentFileId || saved?.documentPages?.[0]?.fileId,
       documentUrl: saved?.documentUrl,
       documentPath: saved?.documentPath,
       documentName: saved?.documentName,
@@ -649,6 +651,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       items,
       documentProvider: saved?.documentProvider,
       documentPages: saved?.documentPages,
+      documentFileId: saved?.documentFileId || saved?.documentPages?.[0]?.fileId,
       documentUrl: saved?.documentUrl,
       documentPath: saved?.documentPath,
       documentName: saved?.documentName,
@@ -794,7 +797,16 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     const roles = ["purchaser", "requisitioner", "amd_personnel"] as const;
     await Promise.all(roles.map(async (role) => {
       const link = getPendingLink(po.poNumber, role);
-      if (link) await updateEvaluationLinkPOCloud(link.token, po);
+      const currentName=role==="purchaser"?po.buyerName:
+        role==="requisitioner"?po.requisitioner:po.receivedBy;
+      const currentEmail=role==="purchaser"?po.buyerEmail:
+        role==="requisitioner"?po.requisitionerEmail:resolveAmdEmail();
+      // An outdated link belongs to its original recipient until manually revoked.
+      if(link && normalizePerson(link.evaluatorName)===normalizePerson(currentName) &&
+        String(link.evaluatorEmail||"").trim().toLowerCase()===
+          String(currentEmail||"").trim().toLowerCase()){
+        await updateEvaluationLinkPOCloud(link.token,po);
+      }
     }));
   };
 
@@ -1057,8 +1069,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     return "";
   };
 
-  const pendingLinkProblem = () => {
-    if(!selectedPo?.poNumber) return "";
+  const mismatchedPendingLink = () => {
+    if(!selectedPo?.poNumber) return null;
     const targets=[
       {role:"purchaser" as const,name:selectedPo.buyerName,email:resolveBuyerEmail()},
       {role:"requisitioner" as const,name:selectedPo.requisitioner,email:resolveReqEmail()},
@@ -1070,12 +1082,48 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       if(pending&&(
         normalizePerson(pending.evaluatorName)!==normalizePerson(entry.name) ||
         String(pending.evaluatorEmail||"").trim().toLowerCase()!==entry.email.trim().toLowerCase())){
-        return "An existing "+(entry.role==="purchaser"?"Buyer":entry.role==="requisitioner"?"Requisitioner":"AMD")+
-          " evaluation link has another recipient. Revoke the outdated link before making a new one.";
+        return {role:entry.role,link:pending,
+          label:entry.role==="purchaser"?"Buyer":entry.role==="requisitioner"?"Requisitioner":"AMD"};
       }
     }
-    return "";
+    return null;
   };
+
+  const pendingLinkProblem = () => {
+    const issue=mismatchedPendingLink();
+    return issue ? "An existing "+issue.label+
+      " evaluation link has another recipient. Revoke the outdated link before making a new one." : "";
+  };
+
+  const revokeOutdatedLink = async () => {
+    const mismatch=mismatchedPendingLink();
+    if(!mismatch||!selectedPo||replacingLink||!neonEnabled())return;
+    const wasEmailed=Boolean(mismatch.link.emailSentAt||mismatch.link.lastEmailSentAt);
+    const confirmation=wasEmailed
+      ? "WARNING: This "+mismatch.label+" evaluation link has already been marked as emailed. Revoking it permanently disables the old link. It does NOT recall the message already sent. Continue with recipient correction?"
+      : "Revoke the outdated "+mismatch.label+" evaluation link? The previous token will become invalid, but its history will be kept.";
+    if(!window.confirm(confirmation))return;
+    setReplacingLink(true);
+    try{
+      await neonWrite("revokePendingLink",{
+        token:mismatch.link.token,
+        poNumber:selectedPo.poNumber,
+        role:mismatch.role,
+        confirmPreviouslySent:wasEmailed,
+      });
+      setCreatedLinks(prev=>({...prev,[mismatch.role]:""}));
+      onNotify("Outdated "+mismatch.label+
+        " link revoked. The existing record is retained for audit. Wait for the recipient status to refresh, then select Create evaluation links.");
+    }catch(error){
+      onNotify(error instanceof Error?error.message:"Could not revoke the outdated evaluation link.");
+    }finally{setReplacingLink(false);}
+  };
+
+  const privateDriveFileId = (po:PurchaseOrder|null) =>
+    String(po?.documentFileId || po?.documentPages?.[0]?.fileId || "");
+  const hasStoredPrivatePo = (po:PurchaseOrder|null) =>
+    po?.documentProvider==="google-drive" &&
+    /^[A-Za-z0-9_-]{15,150}$/.test(privateDriveFileId(po));
 
   const rememberContact = async (role: EvaluationContactRole, name: string, email: string, department?: string) => {
     const cleanName = String(name || "").trim();
@@ -1100,8 +1148,8 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       onNotify("Enter the PO number before saving the PO record.");
       return;
     }
-    const recipientIssue=emailAssignmentProblem()||pendingLinkProblem();
-    if(recipientIssue){onNotify(recipientIssue);return;}
+    const assignmentIssue=emailAssignmentProblem();
+    if(assignmentIssue){onNotify(assignmentIssue);return;}
     const reqEmail = resolveReqEmail();
     const next = {
       ...selectedPo,
@@ -1123,8 +1171,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const createEvaluationLinks = async () => {
     if (!selectedPo) return;
-    if(neonEnabled() && (selectedPo.documentProvider!=="google-drive" ||
-      !selectedPo.documentFileId)){
+    if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
       onNotify("Upload the official PO to the approved private school Drive before generating evaluator links.");
       return;
     }
@@ -1211,8 +1258,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const sendOneEvaluation = async (role: "purchaser" | "requisitioner" | "amd_personnel") => {
     if (!selectedPo?.documentUrl) throw new Error("Store the official PO in private school Drive before sending.");
-    if(neonEnabled() && (selectedPo.documentProvider!=="google-drive" ||
-      !selectedPo.documentFileId)){
+    if(neonEnabled() && !hasStoredPrivatePo(selectedPo)){
       throw new Error("This PO is a legacy document. Archive it in the approved school Google Drive before sending a new evaluator request.");
     }
     if(!schoolEmailEnabled)throw new Error("Evaluator emails are disabled in Preview until the school email integration is approved and verified.");
@@ -1479,7 +1525,15 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
           <div className="po-pricing-note">{poExtracting ? "Reading pricing and PO details from the uploaded PDF/image…" : "PDFs and image scans are checked by Gemini for visible PO values. You can correct any value above before saving."}</div><h3 className="po-workflow-title workflow-second">3. Purchasing / Buyer evaluation</h3><div className="field"><span>Purchasing / Buyer</span><input value={selectedPo.buyerName} onChange={(e) => { const next = e.target.value; const directory = findDirectoryContact(next, "purchaser") ||
           findSchoolContact(next === PURCHASING_EVALUATOR_NAME
             ? PURCHASING_EVALUATOR_DIRECTORY_NAME : next);
-          setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || "" }); setBuyerEmail(directory?.email || ""); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · exact Email Directory match or manually verified</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">4. Requisitioner evaluation</h3><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · exact name match from school Requisitioner Details</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">5. AMD Personnel / Received by evaluation</h3><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · name matched from school directory or Email Directory</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label>{emailAssignmentProblem()&&<div role="alert" style={{color:"#991b1b",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:10,fontSize:12}}>{emailAssignmentProblem()}</div>}{pendingLinkProblem()&&<div role="alert" style={{color:"#92400e",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:10,fontSize:12}}>{pendingLinkProblem()}</div>}<div className="po-directory-hint">Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 16, marginBottom: 12 }}>
+          setSelectedPo({ ...selectedPo, buyerName: next, buyerEmail: directory?.email || "" }); setBuyerEmail(directory?.email || ""); }} placeholder="Buyer / purchasing holder from PO"/></div><label className="field"><span>Purchasing / Buyer email · exact Email Directory match or manually verified</span><input type="email" value={buyerEmail} onChange={(e) => { setBuyerEmail(e.target.value); setSelectedPo({ ...selectedPo, buyerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">4. Requisitioner evaluation</h3><div className="field requisitioner-picker-field"><span>Requisitioner</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.requisitioner} onFocus={() => setRequisitionerLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, requisitioner: next, requisitionerEmail: exact?.email || "" }); setRequisitionerEmail(exact?.email || ""); setRequisitionerLookupOpen(true); }} onBlur={() => window.setTimeout(() => setRequisitionerLookupOpen(false), 180)} placeholder="Type requisitioner name"/></div>{requisitionerLookupOpen && requisitionerSuggestions.length > 0 && <div className="po-suggestions requisitioner-suggestions">{requisitionerSuggestions.map((item) => <button type="button" key={`${normalizePerson(item.name)}-${item.email}`} onMouseDown={(e) => e.preventDefault()} onClick={() => selectRequisitioner(item)}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "REQUISITIONER"}</span></div><small>{item.email}</small></button>)}</div>}</div></div><label className="field"><span>Requisitioner email · exact name match from school Requisitioner Details</span><input type="email" value={requisitionerEmail} onChange={(e) => { setRequisitionerEmail(e.target.value); setSelectedPo({ ...selectedPo, requisitionerEmail: e.target.value }); }} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label><h3 className="po-workflow-title workflow-second">5. AMD Personnel / Received by evaluation</h3><div className="field"><span>Received by / AMD Personnel</span><div className="autocomplete-wrap"><div className="po-input-wrap requisitioner-input-wrap"><UserCheck size={14} className="po-search-icon"/><input value={selectedPo.receivedBy} onFocus={() => setAmdLookupOpen(true)} onChange={(e) => { const next = e.target.value; const exact = findSchoolContact(next) || requisitionerContacts.find((item) => normalizePerson(item.name) === normalizePerson(next)); setSelectedPo({ ...selectedPo, receivedBy: next }); setAmdEmail(exact?.email || ""); setAmdLookupOpen(true); }} onBlur={() => window.setTimeout(() => setAmdLookupOpen(false), 180)} placeholder="Type Received by / AMD personnel name"/></div>{amdLookupOpen && requisitionerContacts.filter((item) => { const q = normalizePerson(selectedPo.receivedBy); return !q || normalizePerson(item.name).includes(q) || item.email.toLowerCase().includes(q); }).slice(0,8).map((item) => <div className="po-suggestions requisitioner-suggestions" key={`${normalizePerson(item.name)}-${item.email}`}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedPo({ ...selectedPo, receivedBy: item.name }); setAmdEmail(item.email); setAmdLookupOpen(false); }}><div className="po-suggestion-top"><b>{item.name}</b><span>{item.department || "AMD / EMPLOYEE"}</span></div><small>{item.email}</small></button></div>)}</div></div><label className="field"><span>AMD / Received by email · name matched from school directory or Email Directory</span><input type="email" value={amdEmail} onChange={(e) => setAmdEmail(e.target.value)} placeholder="Auto-filled from sheet or saved Email Directory · manual override allowed"/></label>{emailAssignmentProblem()&&<div role="alert" style={{color:"#991b1b",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:10,fontSize:12}}>{emailAssignmentProblem()}</div>}{pendingLinkProblem()&&<div role="alert" style={{color:"#92400e",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:10,fontSize:12}}>{pendingLinkProblem()}</div>}
+{mismatchedPendingLink() && neonEnabled() &&
+  <button type="button" className="btn secondary btn-sm"
+    disabled={replacingLink || !canEdit}
+    onClick={()=>void revokeOutdatedLink()}
+    style={{margin:"8px 0",border:"1px solid #f59e0b",color:"#92400e"}}>
+    {replacingLink?"Revoking…":"Revoke outdated "+mismatchedPendingLink()!.label+" link"}
+  </button>}
+<div className="po-directory-hint">Missing an email in the spreadsheet? <a href="/email-directory" style={{ fontWeight: 700 }}>Save it once in Email Directory</a> and it will be reused automatically.</div><div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 16, marginBottom: 12 }}>
   <strong style={{ fontSize: 13 }}>Evaluation Recipient Status</strong>
   {(["purchaser", "requisitioner", "amd_personnel"] as const)
     .filter((role) => role === "purchaser" ? Boolean(selectedPo.buyerName) : role === "requisitioner" ? Boolean(selectedPo.requisitioner) : Boolean(selectedPo.receivedBy))
@@ -1498,7 +1552,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
         <span className={completed ? "badge badge-done" : "badge badge-pending"}>{status}{!completed && (latest?.reminderCount || 0) > 0 ? " · " + latest?.reminderCount + " reminders" : ""}</span>
       </div>;
     })}
-</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled || (neonEnabled() && selectedPo.documentProvider!=="google-drive")} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All use the same official Cloudinary PO attachment, while results are saved separately by evaluator role.</span></div></aside></div></div></div>}
+</div><div className="po-action-stack"><button className="btn secondary" onClick={() => void saveCurrentPo()}><CheckCircle2 size={16}/> Save PO + remember emails</button><button className="btn secondary" onClick={() => void createEvaluationLinks()}><UserCheck size={16}/> Create evaluation links</button><button className="btn primary" disabled={sending || !selectedPo.documentUrl || !schoolEmailEnabled || (neonEnabled() && selectedPo.documentProvider!=="google-drive")} onClick={() => void sendEmail()}><Send size={16}/> {sending ? "Sending…" : "Send PO + evaluations"}</button></div><p style={{ fontSize: 12, lineHeight: 1.55, margin: "10px 0 0", color: "var(--muted, #64748b)" }}>Email sent means the provider accepted the message, not necessarily that it reached Inbox. Ask evaluators to check Spam and mark genuine emails as Not spam. Submitted is the confirmation of completion.</p>{!selectedPo.documentUrl && <div className="po-warning-note"><UploadCloud size={14}/><span>Send stays locked until an official PO is stored, so the system cannot accidentally attach a generated or outdated document.</span></div>}{(createdLinks.purchaser || createdLinks.requisitioner || createdLinks.amd_personnel) && <div className="po-link-box"><small>Evaluation links · private access</small><p style={{ margin: "6px 0 12px", fontSize: 12, lineHeight: 1.55, opacity: 0.78 }}>If Gmail filters a request into Spam, use the Copy button to share the correct role-specific link privately with its intended evaluator. Do not post evaluation links publicly.</p>{createdLinks.purchaser && <div><b>Purchasing / Buyer:</b> <a href={createdLinks.purchaser} target="_blank" rel="noreferrer">{createdLinks.purchaser}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.purchaser!).then(() => onNotify("Purchasing / Buyer link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.requisitioner && <div><b>Requisitioner:</b> <a href={createdLinks.requisitioner} target="_blank" rel="noreferrer">{createdLinks.requisitioner}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.requisitioner!).then(() => onNotify("Requisitioner link copied."))}><Mail size={13}/> Copy</button></div>}{createdLinks.amd_personnel && <div className="po-link-entry amd"><b>AMD Personnel:</b> <a href={createdLinks.amd_personnel} target="_blank" rel="noreferrer">{createdLinks.amd_personnel}</a><button className="btn ghost btn-sm" onClick={() => navigator.clipboard.writeText(createdLinks.amd_personnel!).then(() => onNotify("AMD Personnel link copied."))}><Mail size={13}/> Copy</button></div>}</div>}<div className="po-source-note"><Sparkles size={14}/><span>Purchasing / Buyer, Requisitioner, and AMD Personnel each receive a separate one-time evaluation link. Purchasing / Buyer uses the five-criterion flow; Requisitioner and AMD use the four-criterion flow. All roles use the same official private school Google Drive PO attachment, while results are saved separately by evaluator role.</span></div></aside></div></div></div>}
     </div>
   );
 }
