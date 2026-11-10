@@ -150,3 +150,151 @@ function siscDriveGetPoFile_(request) {
     base64: Utilities.base64Encode(bytes)
   };
 }
+
+/**
+ * Bounded chunk transport. Each request remains below Vercel's 4.5MB
+ * Function payload limit and is authenticated by the existing school
+ * doPost(e) webhook. No Drive token reaches the browser.
+ */
+var SISC_PO_CHUNK_SIZE_ = 1024 * 1024;
+var SISC_PO_STAGE_FOLDER_ = '_Supplier Evaluation Temporary PO Uploads';
+
+function siscPoUploadId_(id) {
+  var text=String(id||'');
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(text)){
+    throw new Error('Invalid secure PO upload identifier.');
+  }
+  return text.toLowerCase();
+}
+function siscPoChunkMeta_(upload) {
+  upload=upload||{};
+  var id=siscPoUploadId_(upload.uploadId);
+  var po=String(upload.poNumber||'').trim();
+  var prf=String(upload.prfNumber||'').trim();
+  var name=String(upload.name||'').trim();
+  var mime=siscDriveAllowedFile_({mimeType:upload.mimeType});
+  var total=Number(upload.totalBytes);
+  var chunks=Number(upload.chunkCount);
+  if(!po||po.length>100||!/^[\w\s#./-]+$/.test(po)||
+    prf.length>100||!name||name.length>160||
+    !Number.isInteger(total)||total<1||total>SISC_PO_UPLOAD_LIMIT_||
+    !Number.isInteger(chunks)||chunks!==Math.ceil(total/SISC_PO_CHUNK_SIZE_)||
+    chunks<1||chunks>8)throw new Error('Invalid bounded PO upload metadata.');
+  var cleanName=name.replace(/[\\/\u0000-\u001f]/g,'_')
+    .replace(/[^a-zA-Z0-9._() -]/g,'_').slice(0,120);
+  var poName=po.replace(/[^a-zA-Z0-9._-]/g,'_').slice(0,80);
+  return {uploadId:id,po:po,prf:prf,name:cleanName,mime:mime,
+    totalBytes:total,chunkCount:chunks,
+    finalName:poName+'--'+id+'--'+cleanName};
+}
+function siscPoStagingFolder_() {
+  var parent=siscDriveFolder_();
+  var folders=parent.getFoldersByName(SISC_PO_STAGE_FOLDER_);
+  return folders.hasNext()?folders.next():parent.createFolder(SISC_PO_STAGE_FOLDER_);
+}
+function siscPoStageName_(id,index){
+  return 'se-upload-'+id+'-part-'+index;
+}
+function siscPoStoredResult_(file) {
+  return {ok:true,provider:'google-drive',fileId:file.getId(),
+    name:file.getName(),mimeType:file.getMimeType(),size:file.getSize()};
+}
+
+/** An idempotent 1 MiB chunk saved in the private temporary Drive folder. */
+function siscDriveUploadChunk_(request) {
+  var upload=(request&&request.upload)||{};
+  var info=siscPoChunkMeta_(upload);
+  var index=Number(upload.chunkIndex);
+  if(!Number.isInteger(index)||index<0||index>=info.chunkCount){
+    throw new Error('Invalid PO chunk position.');
+  }
+  var encoded=String(upload.base64||'');
+  if(!encoded||encoded.length>Math.ceil(SISC_PO_CHUNK_SIZE_*4/3)+20||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)){
+    throw new Error('Invalid PO chunk contents.');
+  }
+  var bytes=Utilities.base64Decode(encoded);
+  var expected=Math.min(SISC_PO_CHUNK_SIZE_,
+    info.totalBytes-index*SISC_PO_CHUNK_SIZE_);
+  if(bytes.length!==expected)throw new Error('PO chunk has an invalid length.');
+  var lock=LockService.getScriptLock();
+  if(!lock.tryLock(25000))throw new Error('PO archive is busy. Retry this chunk.');
+  try{
+    var stage=siscPoStagingFolder_();
+    var chunkName=siscPoStageName_(info.uploadId,index);
+    var existing=stage.getFilesByName(chunkName);
+    if(existing.hasNext()){
+      var item=existing.next();
+      if(item.getSize()!==expected)throw new Error('PO chunk conflict. Begin a new upload.');
+      return {ok:true,chunkIndex:index,received:true,alreadyStored:true};
+    }
+    stage.createFile(Utilities.newBlob(bytes,'application/octet-stream',chunkName));
+    return {ok:true,chunkIndex:index,received:true,alreadyStored:false};
+  }finally{lock.releaseLock();}
+}
+
+/** Assemble verified, private chunks into a single official school PO. */
+function siscDriveFinishChunkUpload_(request) {
+  var info=siscPoChunkMeta_((request&&request.upload)||{});
+  var lock=LockService.getScriptLock();
+  if(!lock.tryLock(25000))throw new Error('PO archive is busy. Retry finalization.');
+  try{
+    var parent=siscDriveFolder_();
+    var existing=parent.getFilesByName(info.finalName);
+    if(existing.hasNext())return siscPoStoredResult_(existing.next());
+    var stage=siscPoStagingFolder_();
+    var all=[];
+    var staged=[];
+    for(var index=0;index<info.chunkCount;index++){
+      var matching=stage.getFilesByName(siscPoStageName_(info.uploadId,index));
+      if(!matching.hasNext())throw new Error('Missing upload chunk '+index+'. Retry the upload.');
+      var part=matching.next();
+      var bytes=part.getBlob().getBytes();
+      var expected=Math.min(SISC_PO_CHUNK_SIZE_,
+        info.totalBytes-index*SISC_PO_CHUNK_SIZE_);
+      if(bytes.length!==expected)throw new Error('PO upload chunk mismatch.');
+      for(var j=0;j<bytes.length;j++)all.push(bytes[j]);
+      staged.push(part);
+    }
+    if(all.length!==info.totalBytes)throw new Error('PO upload size mismatch.');
+    siscDriveCheckMagic_(all,info.mime);
+    var file=parent.createFile(Utilities.newBlob(all,info.mime,info.finalName));
+    file.setDescription('Official PO '+info.po+
+      (info.prf?' | PRF '+info.prf:'')+
+      ' | School Supplier Evaluation private upload.');
+    staged.forEach(function(part){try{part.setTrashed(true);}catch(ignore){}});
+    return siscPoStoredResult_(file);
+  }finally{lock.releaseLock();}
+}
+
+/** Return just one small verified piece; supports private PDF preview >4.5MB. */
+function siscDriveGetPoChunk_(request) {
+  var id=String(request&&request.fileId||'');
+  var index=Number(request&&request.chunkIndex);
+  if(!/^[A-Za-z0-9_-]{15,150}$/.test(id)||
+    !Number.isInteger(index)||index<0||index>7){
+    throw new Error('Invalid private PO document request.');
+  }
+  var parent=siscDriveFolder_();
+  var file=DriveApp.getFileById(id);
+  if(!siscWebhookFileInFolder_(file,parent.getId())){
+    throw new Error('The PO is outside the approved private archive.');
+  }
+  var mime=siscDriveAllowedFile_({mimeType:file.getMimeType()});
+  var size=file.getSize();
+  if(size<1||size>SISC_PO_UPLOAD_LIMIT_)throw new Error('Unsupported PO document size.');
+  var chunks=Math.ceil(size/SISC_PO_CHUNK_SIZE_);
+  if(index>=chunks)throw new Error('PO chunk index is out of range.');
+  var bytes=file.getBlob().getBytes();
+  var part=bytes.slice(index*SISC_PO_CHUNK_SIZE_,(index+1)*SISC_PO_CHUNK_SIZE_);
+  return {ok:true,fileId:id,mimeType:mime,totalBytes:size,
+    chunkCount:chunks,chunkIndex:index,base64:Utilities.base64Encode(part)};
+}
+
+/** Safe read-only remote diagnostic for an authorized administrator. */
+function siscDriveWebhookHealth_(){
+  var result=siscDriveCheckFolderSetup();
+  return {ok:true,folderAccessible:result.folderAccess==='verified',
+    folderPrivate:result.folderPrivacy==='no-anyone-link',
+    chunkUploadAvailable:true,chunkPreviewAvailable:true};
+}
