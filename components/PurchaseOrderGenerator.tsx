@@ -241,6 +241,11 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
 
   const [privatePoPreview, setPrivatePoPreview] = useState("");
   const [privatePoLoading, setPrivatePoLoading] = useState(false);
+  const [privatePoOpen, setPrivatePoOpen] = useState(false);
+  const [privatePoError, setPrivatePoError] = useState("");
+  const [privatePoTitle, setPrivatePoTitle] = useState("Official PO document");
+  const [privatePoMime, setPrivatePoMime] = useState("");
+
 
   const [createdLinks, setCreatedLinks] = useState<{ purchaser?: string; requisitioner?: string; amd_personnel?: string }>({});
   const createdLink = createdLinks.requisitioner || createdLinks.amd_personnel || "";
@@ -312,6 +317,14 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   useEffect(()=>()=>{
     if(privatePoPreview)URL.revokeObjectURL(privatePoPreview);
   },[privatePoPreview]);
+  useEffect(()=>{
+    if(!previewOpen){
+      setPrivatePoOpen(false);
+      setPrivatePoPreview("");
+      setPrivatePoError("");
+    }
+  },[previewOpen]);
+
 
   async function checkSchoolDrive(){
     setSchoolDriveChecking(true);
@@ -331,21 +344,36 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     }finally{setSchoolDriveChecking(false);}
   }
 
-  async function openPrivatePoFile(fileId:string) {
+  function closePrivatePoPreview(){
+    setPrivatePoOpen(false);
+    setPrivatePoPreview("");
+    setPrivatePoError("");
+  }
+
+  async function openPrivatePoFile(fileId:string, name:string) {
+    // Show the dialog immediately so staff can see loading progress and
+    // errors instead of wondering why they remain on the same website.
+    setPrivatePoTitle(name||"Official PO document");
+    setPrivatePoOpen(true);
+    setPrivatePoPreview("");
+    setPrivatePoMime("");
+    setPrivatePoError("");
     if(!/^[A-Za-z0-9_-]{15,150}$/.test(fileId)){
-      onNotify("The PO does not have a valid private school Drive file ID.");return;
+      setPrivatePoError("The stored PO does not have a valid school Drive file ID.");
+      return;
     }
     setPrivatePoLoading(true);
     try{
       const token=await auth?.currentUser?.getIdToken();
-      if(!token)throw new Error("Sign in as a Purchasing administrator to open this PO.");
+      if(!token)throw new Error("Sign in as an approved Purchasing administrator to open this PO.");
       const doc=await readPrivatePoChunks(
         index=>"/api/po-drive-file?fileId="+encodeURIComponent(fileId)+"&chunkIndex="+index,
         token,
       );
+      setPrivatePoMime(doc.mimeType);
       setPrivatePoPreview(URL.createObjectURL(doc.blob));
     }catch(error){
-      onNotify(error instanceof Error?error.message:"Could not load private PO.");
+      setPrivatePoError(error instanceof Error?error.message:"Could not load the private PO.");
     }finally{setPrivatePoLoading(false);}
   }
 
@@ -1271,14 +1299,65 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
                 : [{fileId:selectedPo.documentFileId,name:selectedPo.documentName||"Official PO",url:selectedPo.documentUrl}]).map((doc,index)=>(
                   <button key={doc.fileId||index} type="button" className="btn secondary btn-sm"
                     disabled={privatePoLoading||!doc.fileId}
-                    onClick={()=>doc.fileId&&void openPrivatePoFile(doc.fileId||"")}>
-                    {privatePoLoading?"Opening…":"View secure page "+(index+1)}
+                    onClick={()=>doc.fileId&&void openPrivatePoFile(doc.fileId||"",doc.name||selectedPo.documentName||"Official PO")}>
+                    {"Preview page "+(index+1)}
                   </button>
                 ))}
             </div>
-            {privatePoPreview&&
-              <iframe className="stored-po-frame" title="Private school Drive PO preview"
-                src={privatePoPreview}/>}
+            {privatePoOpen&&
+              <div role="presentation" style={{
+                position:"fixed",inset:0,zIndex:12000,background:"rgba(9,18,35,.78)",
+                display:"flex",alignItems:"center",justifyContent:"center",padding:12,
+              }}>
+                <div role="dialog" aria-modal="true" aria-label="Official private PO preview"
+                  style={{width:"min(1050px,100%)",height:"min(94vh,950px)",
+                    display:"flex",flexDirection:"column",overflow:"hidden",
+                    background:"#fff",borderRadius:13,boxShadow:"0 24px 80px rgba(0,0,0,.4)"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    gap:14,padding:"12px 16px",borderBottom:"1px solid #e2e8f0",flexWrap:"wrap"}}>
+                    <div style={{minWidth:0}}>
+                      <strong style={{fontSize:15,color:"#0f172a",display:"block",overflowWrap:"anywhere"}}>
+                        {privatePoTitle}
+                      </strong>
+                      <span style={{fontSize:12,color:"#475569"}}>Private school Google Drive · authorized preview</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      {privatePoPreview&&
+                        <a className="btn secondary btn-sm" href={privatePoPreview}
+                          target="_blank" rel="noopener noreferrer">
+                          <Eye size={14}/> Open in new tab
+                        </a>}
+                      <button type="button" className="btn secondary btn-sm"
+                        onClick={closePrivatePoPreview} aria-label="Close private PO preview">
+                        <X size={15}/> Close
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{flex:1,minHeight:0,background:"#f1f5f9",
+                    display:"flex",justifyContent:"center",alignItems:"center",padding:10}}>
+                    {privatePoLoading?
+                      <div role="status" style={{textAlign:"center",padding:24,color:"#334155"}}>
+                        <RefreshCw size={24} className="spin"/>
+                        <p>Retrieving the official PO securely from school Drive…</p>
+                      </div>:
+                      privatePoError?
+                        <div role="alert" style={{maxWidth:500,padding:18,
+                          border:"1px solid #fecaca",borderRadius:8,background:"#fef2f2",
+                          color:"#991b1b"}}>
+                          <b>Could not open this PO document</b>
+                          <p style={{marginBottom:0}}>{privatePoError}</p>
+                        </div>:
+                        privatePoPreview?
+                          privatePoMime.startsWith("image/")?
+                            <img src={privatePoPreview} alt={privatePoTitle}
+                              style={{display:"block",maxHeight:"100%",maxWidth:"100%",objectFit:"contain"}}/>:
+                            <iframe title="Official PO PDF preview" src={privatePoPreview}
+                              style={{display:"block",width:"100%",height:"100%",border:0,
+                                borderRadius:6,background:"#fff"}}/>:
+                          <p style={{color:"#475569"}}>Select a document to preview.</p>}
+                  </div>
+                </div>
+              </div>}
             <button className="btn ghost btn-sm replace-po-btn" disabled={!canEdit||uploading||!schoolDriveEnabled}
               onClick={()=>fileInputRef.current?.click()}>Replace / add PO pages</button>
           </div>
