@@ -256,7 +256,7 @@ export async function POST(request: Request) {
         "Evaluator";
       const evaluatorEmail=(s(input.evaluatorEmail)||
         (role==="purchaser"?s(po.buyerEmail):role==="amd_personnel"?s(input.amdEmail):s(input.requisitionerEmail))).trim().toLowerCase();
-      if(!/^[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]+$/.test(evaluatorEmail)){
+      if(!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(evaluatorEmail)){
         throw new AppAccessError("A verified evaluator email is required before creating a link.",400);
       }
       const workKey=[poNumber.toLowerCase()||"PRF:"+prfNumber.toLowerCase(),role].join("|");
