@@ -17,6 +17,11 @@ final backup and rollback. A Vercel READY build is not proof of these flows.
 
 ## Automated smoke test verified — November 10, 2026
 
+The authorized operator ran the original **13 checks** on November 10,
+2026 and all passed. The test now includes a **14th** anonymous denial
+check for the new admin-only rollback QA endpoint. The expanded suite has
+not yet been run by the operator.
+
 The authorized operator ran:
 
 ```bash
