@@ -30,7 +30,7 @@ import {
   type EvaluationContact,
   type EvaluationContactRole,
 } from "../lib/firestore";
-import { cloudinaryConfigured, getCloudinarySetupMessage, uploadPoDocumentToCloudinary, type CloudinaryPoDocument } from "../lib/cloudinary";
+import { readPrivatePoChunks } from "../lib/privatePoReader";
 import { auth } from "../lib/firebase";
 import { neonEnabled } from "../lib/neonClient";
 
@@ -234,6 +234,9 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
   const [poExtracting, setPoExtracting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [schoolDriveEnabled, setSchoolDriveEnabled] = useState(false);
+  const [schoolDriveMessage, setSchoolDriveMessage] = useState("");
+  const [schoolDriveChecking, setSchoolDriveChecking] = useState(false);
+
   const [privatePoPreview, setPrivatePoPreview] = useState("");
   const [privatePoLoading, setPrivatePoLoading] = useState(false);
 
@@ -299,24 +302,42 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     if(privatePoPreview)URL.revokeObjectURL(privatePoPreview);
   },[privatePoPreview]);
 
+  async function checkSchoolDrive(){
+    setSchoolDriveChecking(true);
+    setSchoolDriveMessage("");
+    try{
+      const bearer=await auth?.currentUser?.getIdToken();
+      if(!bearer)throw new Error("Please sign in as an active Purchasing administrator.");
+      const result=await fetch("/api/po-drive?diagnostic=1",{
+        cache:"no-store",headers:{Authorization:"Bearer "+bearer},
+      });
+      const body=await result.json();
+      if(!result.ok||!body.ok)throw new Error(body.message||"School Drive diagnostic is unavailable.");
+      setSchoolDriveEnabled(Boolean(body.canUpload));
+      setSchoolDriveMessage(String(body.message||"School Drive setup needs approval."));
+    }catch(error){
+      setSchoolDriveMessage(error instanceof Error?error.message:"School Drive is unavailable.");
+    }finally{setSchoolDriveChecking(false);}
+  }
+
   async function openPrivatePoFile(fileId:string) {
     if(!/^[A-Za-z0-9_-]{15,150}$/.test(fileId)){
-      onNotify("This PO has no valid school Drive file ID.");return;
+      onNotify("The PO does not have a valid private school Drive file ID.");return;
     }
     setPrivatePoLoading(true);
     try{
       const token=await auth?.currentUser?.getIdToken();
-      if(!token)throw new Error("Sign in as a Purchasing administrator to open this file.");
-      const response=await fetch("/api/po-drive-file?fileId="+encodeURIComponent(fileId),{
-        cache:"no-store",headers:{Authorization:"Bearer "+token},
-      });
-      if(!response.ok)throw new Error("The school Drive document could not be opened.");
-      const blob=await response.blob();
-      setPrivatePoPreview(URL.createObjectURL(blob));
+      if(!token)throw new Error("Sign in as a Purchasing administrator to open this PO.");
+      const doc=await readPrivatePoChunks(
+        index=>"/api/po-drive-file?fileId="+encodeURIComponent(fileId)+"&chunkIndex="+index,
+        token,
+      );
+      setPrivatePoPreview(URL.createObjectURL(doc.blob));
     }catch(error){
       onNotify(error instanceof Error?error.message:"Could not load private PO.");
     }finally{setPrivatePoLoading(false);}
   }
+
 
   const savedByPo = useMemo(() => {
     const map = new Map<string, PurchaseOrder>();
@@ -731,73 +752,76 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
     if (!selectedPo) return;
     const chosen = files.filter(Boolean);
     if (!chosen.length) return;
-    const useSchoolDrive=neonEnabled();
-    if(useSchoolDrive&&!schoolDriveEnabled){
-      onNotify("Private school Drive upload is paused in Neon Preview until the school-authorized webhook and folder are enabled. No document was uploaded.");
+    if(!schoolDriveEnabled){
+      onNotify("The school-owned Google Drive must be verified and enabled by the school account first. Select Check Drive Connection to see the setup status. No PO was uploaded.");
       return;
     }
-    if(!useSchoolDrive&&!cloudinaryConfigured()){
-      onNotify(getCloudinarySetupMessage());
-      return;
-    }
-    if(useSchoolDrive&&!selectedPo.poNumber.trim()){
+    if(!selectedPo.poNumber.trim()){
       onNotify("Enter the PO number before archiving its official document in school Drive.");
       return;
     }
-    const totalBytes = chosen.reduce((sum, file) => sum + file.size, 0);
-    if(useSchoolDrive && chosen.some(file=>file.size<1 || file.size>8*1024*1024 ||
+    const totalBytes=chosen.reduce((sum,file)=>sum+file.size,0);
+    if(chosen.some(file=>file.size<1||file.size>8*1024*1024||
       !["application/pdf","image/jpeg","image/png","image/webp"].includes(file.type))){
-      onNotify("School Drive accepts PDF, JPG, PNG or WebP only, maximum 8 MiB per file.");
+      onNotify("Only PDF, JPG, PNG or WebP up to 8 MiB each can be stored in the school Drive.");
       return;
     }
-    if (totalBytes > (useSchoolDrive ? 20 : 50) * 1024 * 1024) {
-      onNotify("The selected PO pages are larger than 50 MB total. Please compress the scans or upload fewer pages at once.");
+    if(totalBytes>20*1024*1024){
+      onNotify("PO attachments must total no more than 20 MiB. Upload fewer pages.");
       return;
     }
     setUploading(true);
     setUploadProgress(0);
     try {
-      let documentPages: Array<{
-        url:string;fileId?:string;publicId?:string;resourceType?:string;
-        format?:string;name:string;mimeType?:string;size?:number;pages?:number;
+      const documentPages:Array<{
+        url:string;fileId?:string;name:string;mimeType?:string;size?:number;
       }>=[];
-      if(useSchoolDrive){
-        const idToken=await auth?.currentUser?.getIdToken();
-        if(!idToken)throw new Error("Please sign in as an approved Purchasing administrator.");
-        for(const [index,file] of chosen.entries()){
+      const idToken=await auth?.currentUser?.getIdToken();
+      if(!idToken)throw new Error("Sign in as an approved Purchasing administrator.");
+      const CHUNK_SIZE=1024*1024;
+      const totalChunkCount=chosen.reduce((sum,file)=>sum+Math.ceil(file.size/CHUNK_SIZE),0);
+      let uploadedChunks=0;
+      for(const file of chosen){
+        const uploadId=crypto.randomUUID();
+        const chunkCount=Math.ceil(file.size/CHUNK_SIZE);
+        const metadata={
+          poNumber:selectedPo.poNumber,
+          prfNumber:selectedPo.prfNumber||"",
+          name:file.name,mimeType:file.type,
+          uploadId,totalBytes:file.size,chunkCount,
+        };
+        for(let index=0;index<chunkCount;index++){
           const form=new FormData();
-          form.set("file",file);
-          form.set("poNumber",selectedPo.poNumber);
-          form.set("prfNumber",selectedPo.prfNumber||"");
+          for(const [name,value] of Object.entries(metadata)){
+            form.set(name,String(value));
+          }
+          form.set("chunkIndex",String(index));
+          form.set("file",file.slice(index*CHUNK_SIZE,(index+1)*CHUNK_SIZE),file.name);
           const response=await fetch("/api/po-drive",{
             method:"POST",headers:{Authorization:"Bearer "+idToken},body:form,
           });
-          const body=await response.json() as {
-            ok:boolean;message?:string;fileId?:string;name?:string;mimeType?:string;size?:number;
-          };
-          if(!response.ok||!body.ok||!body.fileId)throw new Error(
-            body.message||"School Drive rejected this PO attachment. Previously uploaded files remain private and may require an administrator to review.");
-          documentPages.push({
-            fileId:body.fileId,url:"/api/po-drive-file?fileId="+encodeURIComponent(body.fileId),
-            name:body.name||file.name,mimeType:body.mimeType||file.type,
-            size:body.size||file.size,
-          });
-          setUploadProgress(Math.round((index+1)/chosen.length*100));
+          const reply=await response.json();
+          if(!response.ok||!reply.ok)throw new Error(
+            reply.message||"The school-owned Drive did not accept this PO chunk.");
+          uploadedChunks++;
+          setUploadProgress(Math.round(uploadedChunks/totalChunkCount*95));
         }
-      }else{
-        const folder = `sisc-purchase-orders/${String(selectedPo.poNumber || selectedPo.id).replace(/[^a-zA-Z0-9._-]+/g, "_")}`;
-        const progress = chosen.map(() => 0);
-        const uploaded = await Promise.all(chosen.map((file, index) => uploadPoDocumentToCloudinary(file, folder, (percent) => {
-          progress[index] = percent;
-          const average = progress.reduce((sum, value) => sum + value, 0) / progress.length;
-          setUploadProgress(Math.round(average));
-        })));
-        documentPages=uploaded.map((doc,index)=>({
-          url:doc.url,publicId:doc.publicId,resourceType:doc.resourceType,format:doc.format,
-          name:doc.originalFilename||chosen[index].name,mimeType:chosen[index].type||undefined,
-          size:doc.bytes||chosen[index].size,pages:doc.pages,
-        }));
+        const response=await fetch("/api/po-drive",{
+          method:"POST",
+          headers:{"Content-Type":"application/json",Authorization:"Bearer "+idToken},
+          body:JSON.stringify({action:"finish",...metadata}),
+        });
+        const saved=await response.json();
+        if(!response.ok||!saved.ok||!saved.fileId)throw new Error(
+          saved.message||"School Drive could not finalize the official PO document.");
+        documentPages.push({
+          fileId:String(saved.fileId),
+          url:"/api/po-drive-file?fileId="+encodeURIComponent(String(saved.fileId)),
+          name:String(saved.name||file.name),mimeType:String(saved.mimeType||file.type),
+          size:Number(saved.size||file.size),
+        });
       }
+      setUploadProgress(100);
 
       // Read visible PO details from the uploaded official document itself.
       // PDFs are processed as PDFs; multiple image pages are processed one-by-one.
@@ -859,15 +883,15 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       const extractedTotal = amount(extracted?.total) || extractedItems.reduce((sum, item) => sum + amount(item.lineTotal), 0);
 
       const baseUpdated = {
-        ...selectedPo, documentProvider: useSchoolDrive ? "google-drive" as const : "cloudinary" as const,
-        documentPages, documentUrl: documentPages[0].url,
-        documentFileId:useSchoolDrive?documentPages[0].fileId:undefined,
-        documentName: documentPages.length === 1 ? documentPages[0].name : `${selectedPo.poNumber} · ${documentPages.length} pages`,
-        documentMimeType: documentPages[0].mimeType || `application/${documentPages[0].format || "octet-stream"}`,
-        documentSize: documentPages.reduce((sum, doc) => sum + Number(doc.size || 0), 0),
-        documentUploadedAt: new Date().toISOString(), documentUploadedBy: currentUser?.email || "",
-        documentSource: useSchoolDrive?"school-private-drive-po":"cloudinary-official-po",
-        documentPath:useSchoolDrive?undefined:documentPages[0].publicId,
+        ...selectedPo, documentProvider:"google-drive" as const,
+        documentPages,documentUrl:documentPages[0].url,
+        documentFileId:documentPages[0].fileId,
+        documentName:documentPages.length===1?documentPages[0].name:
+          `${selectedPo.poNumber} · ${documentPages.length} pages`,
+        documentMimeType:documentPages[0].mimeType||"application/octet-stream",
+        documentSize:documentPages.reduce((sum,doc)=>sum+Number(doc.size||0),0),
+        documentUploadedAt:new Date().toISOString(),documentUploadedBy:currentUser?.email||"",
+        documentSource:"school-private-drive-po",documentPath:undefined,
       } as PurchaseOrder;
 
       const hasExistingPrice = baseUpdated.items?.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0);
@@ -903,7 +927,7 @@ export default function PurchaseOrderGenerator({ workspaceName, workspaceAddress
       await savePurchaseOrderCloud(enriched);
       await syncPendingEvaluationLinks(enriched);
       const priceFound = extractedItems.some((item) => amount(item.unitPrice) > 0 || amount(item.lineTotal) > 0) || extractedTotal > 0;
-      onNotify(`Official PO ${enriched.poNumber || "record"} stored in ${useSchoolDrive?"private school Drive":"Cloudinary"}${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
+      onNotify(`Official PO ${enriched.poNumber || "record"} stored in private school Google Drive${documentPages.length > 1 ? ` · ${documentPages.length} pages` : ""}${priceFound ? " · pricing extracted from scan" : ""}.`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "Could not store the PO document.");
     } finally {
