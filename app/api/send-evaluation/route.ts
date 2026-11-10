@@ -153,13 +153,19 @@ export async function GET(){
 }
 
 export async function POST(request: Request) {
-  if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
-      process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true") {
-    return NextResponse.json({ok:false,message:"School email delivery is disabled in Neon Preview until an approved test is configured."},{status:503});
-  }
   let claimedToken = "";
   try {
     let body = await request.json();
+    // Narrow one-recipient exception: does not enable ordinary Preview email,
+    // bulk sends, or official school Sheet writes.
+    const previewSafeSend = process.env.VERCEL_ENV === "preview" &&
+      process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+      process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true" &&
+      body?.previewPurchasingRequest === "SEND_JC_PREVIEW_EVALUATION_32187";
+    if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon" &&
+        process.env.NEON_PREVIEW_EXTERNAL_WRITES_ENABLED !== "true" && !previewSafeSend) {
+      throw new AppAccessError("Bulk school email delivery is disabled in Neon Preview. Use the approved Sir JC evaluation test only.",503);
+    }
     if (process.env.NEXT_PUBLIC_DATA_BACKEND === "neon") {
       const session = await appSession(request);
       requirePermission(session,"create_evaluations");
@@ -177,6 +183,25 @@ export async function POST(request: Request) {
       const link=found.rows[0]?.payload as Record<string,any>|undefined;
       if(!link||link.status!=="pending"||!link.po?.poNumber||!link.evaluatorEmail){
         throw new AppAccessError("The evaluation link is unavailable or already completed.",409);
+      }
+      if (previewSafeSend) {
+        // Never trust a browser-supplied recipient, token, role or PO.
+        // Only Sir JC's existing pending Purchasing record for PO 32187.
+        const validRole=link.evaluatorRole==="purchaser" &&
+          String(link.po.poNumber).trim()==="32187" &&
+          String(link.evaluatorName).trim().toLowerCase()==="jc campit";
+        const validDocument=link.po.documentProvider==="google-drive" &&
+          (/^[A-Za-z0-9_-]{15,150}$/.test(String(link.po.documentFileId||"")) ||
+            (Array.isArray(link.po.documentPages) &&
+              link.po.documentPages.some((p:{fileId?:string})=>/^[A-Za-z0-9_-]{15,150}$/.test(String(p?.fileId||"")))));
+        if (!validRole || !validDocument ||
+            !/^[^\\s@,;]+@[^\\s@,;]+\\.[^\\s@,;]+$/.test(String(link.evaluatorEmail).trim())) {
+          throw new AppAccessError("This recipient is not authorized for a single Purchasing Preview evaluation test.",403);
+        }
+        if (link.emailSentAt || link.lastEmailSentAt ||
+            link.emailSendStatus==="sent" || link.emailSendStatus==="sending") {
+          throw new AppAccessError("This Purchasing evaluation email was already sent or is processing. Do not send it twice.",409);
+        }
       }
       const expiry=typeof link.expiresAt==="string"?Date.parse(link.expiresAt):NaN;
       if(Number.isFinite(expiry)&&expiry<=Date.now())throw new AppAccessError(
@@ -297,8 +322,13 @@ export async function POST(request: Request) {
       return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, Math.round((end - start) / 86400000)) : null;
     })();
     const leadTimeText = leadTimeDays === null || leadTimeDays === undefined ? "—" : `${leadTimeDays} day${leadTimeDays === 1 ? "" : "s"}`;
-    const subject = `Supplier Evaluation Request | PO ${String(po.poNumber).replace(/[\r\n]/g, " ")} | ${label.replace(" Evaluation", "")}`;
+    const subject = (previewSafeSend ? "[PREVIEW TEST] " : "")+
+      `Supplier Evaluation Request | PO ${String(po.poNumber).replace(/[\r\n]/g, " ")} | ${label.replace(" Evaluation", "")}`;
     const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f4f5fb;font-family:Arial,Helvetica,sans-serif;color:#111827"><div style="max-width:700px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb"><div style="background:#4f247c;padding:22px 26px;color:#fff"><div style="font-size:11px;opacity:.78;text-transform:uppercase;letter-spacing:1px">${safeText(workspace?.name || "Southville International School and Colleges")}</div><div style="font-size:22px;font-weight:700;margin-top:5px">${label}</div><div style="font-size:12px;opacity:.75;margin-top:3px">PO ${safeText(po.poNumber)} · ${safeText(po.vendorName || "Supplier")}</div></div><div style="padding:26px"><p style="margin:0 0 14px">Hello <strong>${displayName}</strong>,</p><p style="line-height:1.6;margin:0 0 18px">Please review the attached official Purchase Order and complete your ${bodyLabel} supplier evaluation for this transaction. The attachment is the same official PO stored by the Purchasing Office.</p><table style="width:100%;border-collapse:collapse;margin:0 0 22px;background:#f8fafc;border:1px solid #e5e7eb"><tr><td style="padding:9px 12px;font-weight:700">PO Number</td><td style="padding:9px 12px">${safeText(po.poNumber)}</td></tr><tr><td style="padding:9px 12px;font-weight:700">PRF No.</td><td style="padding:9px 12px">${safeText(po.prfNumber || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Supplier</td><td style="padding:9px 12px">${safeText(po.vendorName || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Delivery Date</td><td style="padding:9px 12px">${safeText(po.expectedDate || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Received by</td><td style="padding:9px 12px">${safeText(po.receivedBy || "—")}</td></tr><tr><td style="padding:9px 12px;font-weight:700">Delivery lead time</td><td style="padding:9px 12px">${safeText(leadTimeText)}</td></tr></table><div style="text-align:center;margin:26px 0"><a href="${String(evaluationUrl).replace(/"/g, '&quot;')}" style="display:inline-block;background:#2a895b;color:#fff;text-decoration:none;padding:13px 24px;border-radius:9px;font-weight:700">Open PO &amp; Complete Evaluation</a></div><p style="font-size:12px;color:#6b7280;line-height:1.55;margin:0">${role === "purchaser" ? "Purchasing / Buyer evaluations include the additional compliance criterion." : "This evaluation uses the four delivery/quality, price, timeliness, and after-sales criteria."} The unique link can be submitted once.</p></div></div></body></html>`;
+    const testHtml=previewSafeSend
+      ? html.replace('<div style="padding:26px"><p',
+          '<div style="padding:26px"><p style="background:#fff3cf;color:#674500;padding:12px;border-radius:8px;font-weight:700">PREVIEW TEST ONLY — This is not an official school evaluation.</p><p')
+      : html;
     const text = [
       `Hello ${targetName || "Evaluator"},`,
       `Please review the attached official Purchase Order and complete your ${bodyLabel} supplier evaluation for this transaction.`,
@@ -310,9 +340,10 @@ export async function POST(request: Request) {
       `Delivery lead time: ${leadTimeText}`,
       `Open PO & Complete Evaluation: ${evaluationUrl}`,
       "The official PO is attached. This evaluation link can be submitted once.",
-    ].join("\n\n");
+    ].join("\n\n") + (previewSafeSend
+      ? "\n\nPREVIEW TEST ONLY — This evaluation is not official school data." : "");
 
-    const sent = await sendViaAppsScript({ to: resolvedTo, subject, html, text, attachments });
+    const sent = await sendViaAppsScript({ to: resolvedTo, subject, html:testHtml, text, attachments });
     if (claimedToken) {
       const now=new Date().toISOString();
       await appPool().query(
@@ -333,6 +364,7 @@ export async function POST(request: Request) {
       emailResolved: true,
       evaluatorRole: role,
       provider: "google-apps-script",
+      previewTest: previewSafeSend,
       providerMessage: sent?.message || "Email sent through Google Apps Script.",
     });
   } catch (error) {
