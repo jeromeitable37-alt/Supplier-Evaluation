@@ -1,6 +1,7 @@
 import { getPreviewPool } from "./neonPreviewAccess";
 import { getProductionPool } from "./neonProductionAccess";
 import type { Pool } from "pg";
+import { neonAuth } from "../auth/neon-server";
 
 type FirebaseRecord = {
   localId?: string;
@@ -27,6 +28,37 @@ export function appPool(): Pool {
 }
 
 export async function appSession(request: Request): Promise<AppSession> {
+  // The auth provider can change only after a verified Neon data cutover.
+  // Neon Auth is never allowed to inherit privileges from an unverified email.
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "neon") {
+    if (process.env.NEXT_PUBLIC_DATA_BACKEND !== "neon") {
+      throw new AppAccessError("Neon authentication is not ready for live records.", 503);
+    }
+    const result = await neonAuth.getSession();
+    const identity = result.data?.user;
+    if (!identity?.id || !identity.email || identity.emailVerified !== true) {
+      throw new AppAccessError("Sign in with a verified, approved Purchasing account.", 401);
+    }
+    const database = appPool();
+    const records = await database.query(
+      "SELECT uid,email,role,active,permissions FROM se_users WHERE LOWER(email)=LOWER($1) LIMIT 2",
+      [identity.email],
+    );
+    if (records.rows.length !== 1) {
+      throw new AppAccessError("Account migration or approval is incomplete.", 403);
+    }
+    const profile = records.rows[0];
+    if (profile.active !== true || !["admin", "staff", "viewer"].includes(profile.role)) {
+      throw new AppAccessError("Purchasing account is not authorized.", 403);
+    }
+    return {
+      uid: String(profile.uid),
+      email: String(profile.email),
+      role: profile.role,
+      permissions: Array.isArray(profile.permissions) ? profile.permissions : [],
+      active: true,
+    };
+  }
   const token = /^Bearer\s+([A-Za-z0-9._-]+)$/.exec(request.headers.get("authorization") || "")?.[1];
   if (!token || token.length < 100 || token.length > 10000) {
     throw new AppAccessError("Please sign in to your authorized Purchasing account.", 401);

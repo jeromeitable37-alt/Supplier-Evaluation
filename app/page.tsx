@@ -35,6 +35,17 @@ import {
 } from "../lib/firestore";
 import PurchaseOrderGenerator from "../components/PurchaseOrderGenerator";
 import { neonEnabled } from "../lib/neonClient";
+import { neonAuthClient } from "../lib/auth/neon-client";
+
+const neonAuthMode = process.env.NEXT_PUBLIC_AUTH_PROVIDER === "neon";
+async function signOutCurrentUser() {
+  if (neonAuthMode) {
+    await neonAuthClient.signOut();
+    window.dispatchEvent(new Event("supplier-neon-auth-change"));
+  } else {
+    await signOutFirebase();
+  }
+}
 import AdvancedDashboard from "../components/AdvancedDashboard";
 import AdvancedReports from "../components/AdvancedReports";
 import NeonSheetSyncStatus from "../components/NeonSheetSyncStatus";
@@ -280,12 +291,12 @@ export default function Home() {
     if (savedTheme === "dark") setTheme("dark");
     const savedAccent = typeof window !== "undefined" ? (window.localStorage.getItem("supplier-accent") as any) : null;
     if (["emerald", "indigo", "blue", "violet", "amber"].includes(savedAccent)) setAccent(savedAccent);
-    if (!firebaseConfigured()) {
+    if (!neonAuthMode && !firebaseConfigured()) {
       setAuthLoading(false);
       setDbError("Firebase is not configured. Create .env.local from .env.example and add your Firebase Web App settings.");
       return;
     }
-    const unsubscribe = subscribeAuth(async (user) => {
+    const handleAuthUser = async (user: any) => {
       setAuthUser(user);
       setAuthLoading(false);
       if (fireDbUnsubRef.current) { fireDbUnsubRef.current(); fireDbUnsubRef.current = null; }
@@ -333,7 +344,31 @@ export default function Home() {
         setDbError(error?.message || "Firebase connection failed.");
         setDbLoading(false);
       }
-    });
+    };
+    if (neonAuthMode) {
+      let live = true;
+      const refreshNeonSession = async () => {
+        try {
+          const response = await neonAuthClient.getSession();
+          if (!live) return;
+          const u = response.data?.user;
+          await handleAuthUser(u ? {
+            uid:u.id, email:u.email, displayName:u.name || "", photoURL:u.image || "",
+          } : null);
+        } catch {
+          if (live) await handleAuthUser(null);
+        }
+      };
+      void refreshNeonSession();
+      window.addEventListener("supplier-neon-auth-change", refreshNeonSession);
+      return () => {
+        live = false;
+        window.removeEventListener("supplier-neon-auth-change", refreshNeonSession);
+        if (fireDbUnsubRef.current) fireDbUnsubRef.current();
+        if ((window as any).__supplierUsersUnsub) (window as any).__supplierUsersUnsub();
+      };
+    }
+    const unsubscribe = subscribeAuth(handleAuthUser);
     return () => { unsubscribe(); if (fireDbUnsubRef.current) fireDbUnsubRef.current(); if ((window as any).__supplierUsersUnsub) (window as any).__supplierUsersUnsub(); };
   }, []);
 
@@ -576,7 +611,7 @@ export default function Home() {
   }
   const pageTitle = page === "dashboard" ? "Dashboard" : page === "evaluations" ? "Evaluations" : page === "suppliers" ? "Suppliers" : page === "reports" ? "Reports & Ratings" : page === "purchase-orders" ? "PO Storage" : page === "data" ? "Data Center" : page === "settings" ? "Settings" : page === "profile" ? "My Profile" : page === "ai" ? "AI Support" : "Access & Permissions";
 
-  if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><h1>Loading Purchasing Supplier Evaluation System</h1><p>Checking your secure Firebase session…</p></div></div>;
+  if (authLoading) return <div className="auth-shell"><div className="auth-card auth-loading"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><h1>Loading Purchasing Supplier Evaluation System</h1><p>Checking your secure authentication session…</p></div></div>;
   if (!authUser) return <AuthScreen onSuccess={() => {}} />;
 
   return (
@@ -619,7 +654,7 @@ export default function Home() {
           <div className="top-left"><button className="icon-button" onClick={() => setSidebar((x) => !x)}><Menu size={20} /></button><div className="breadcrumbs"><span>Purchasing</span><b>/</b><strong>{pageTitle}</strong></div></div>
           <div className="top-actions">
             <button className="icon-button" title={theme === "dark" ? "Light mode" : "Dark mode"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><span className="theme-glyph">{theme === "dark" ? "☀" : "☾"}</span></button>
-            <div className="user-chip"><div className="user-avatar">{userProfile?.photoURL ? <img src={userProfile.photoURL} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : String(userProfile?.displayName || authUser.displayName || authUser.email || "U").slice(0,1).toUpperCase()}</div><span>{userProfile?.displayName || authUser.email || "Signed in"}</span><button onClick={async () => { await signOutFirebase(); setRecords([]); setSettingsLoaded(false); setUserProfile(null); }}>Sign out</button></div>
+            <div className="user-chip"><div className="user-avatar">{userProfile?.photoURL ? <img src={userProfile.photoURL} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : String(userProfile?.displayName || authUser.displayName || authUser.email || "U").slice(0,1).toUpperCase()}</div><span>{userProfile?.displayName || authUser.email || "Signed in"}</span><button onClick={async () => { await signOutCurrentUser(); setRecords([]); setSettingsLoaded(false); setUserProfile(null); }}>Sign out</button></div>
             {hasPermission("import_excel") && <><button className="btn ghost" onClick={() => importRef.current?.click()}><Upload size={16} /> Import Excel</button><input ref={importRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files?.[0] && importExcel(e.target.files[0])} /></>}
             {hasPermission("export_excel") && <button className="btn secondary" onClick={() => exportExcel()}><Download size={16} /> Export</button>}
             {hasPermission("create_evaluations") && <button className="btn primary" onClick={openNewEvaluation}><Plus size={17} /> New Evaluation</button>}
@@ -641,7 +676,7 @@ export default function Home() {
           {page === "reports" && <AdvancedReports records={records} monthly={monthly} />}
           {page === "data" && (hasPermission("database_management") ? <DataCenter records={records} onImport={() => importRef.current?.click()} onExport={() => exportExcel()} onClear={clearAll} onRefresh={() => location.reload()} /> : <AccessDenied title="Data Center restricted" text="Your account does not have database management permission." />)}
           {page === "settings" && <SettingsView settings={settings} setSettings={setSettings} onClear={clearAll} theme={theme} setTheme={setTheme} user={authUser} accent={accent} setAccent={setAccent} profile={userProfile} onOpenProfile={() => navigate("profile")} />}
-          {page === "profile" && userProfile && <ProfileView profile={userProfile} theme={theme} accent={accent} onAccent={setAccent} onTheme={setTheme} onSave={async (next) => { setProfileSaving(true); try { await saveUserProfile(next); await updateFirebaseProfile(next.displayName, next.photoURL); setUserProfile(next); setDbError(""); notify("Profile updated successfully."); } finally { setProfileSaving(false); } }} />}
+          {page === "profile" && userProfile && <ProfileView profile={userProfile} theme={theme} accent={accent} onAccent={setAccent} onTheme={setTheme} onSave={async (next) => { setProfileSaving(true); try { await saveUserProfile(next); if (!neonAuthMode) await updateFirebaseProfile(next.displayName, next.photoURL); setUserProfile(next); setDbError(""); notify("Profile updated successfully."); } finally { setProfileSaving(false); } }} />}
           {page === "ai" && <AISupport stats={stats} records={records} prompt={aiPrompt} setPrompt={setAiPrompt} response={aiResponse} busy={aiBusy} onAsk={askAI} />}
           {page === "access" && userProfile?.role === "admin" && <AccessManagement users={managedUsers} currentUser={authUser} onSave={async (next) => { await updateManagedUser(next); notify(`${next.displayName || next.email}'s access updated.`); }} />}
         </div>
@@ -1204,7 +1239,7 @@ function SettingsView({ settings, setSettings, onClear, theme, setTheme, user, a
     <div className="settings-section"><div><b>Workspace profile</b><p>These labels appear across the Purchasing workspace.</p></div><Field label="Workspace name" value={settings.name} onChange={(v) => setSettings({ ...settings, name: v })}/><Field label="Office / department" value={settings.office} onChange={(v) => setSettings({ ...settings, office: v })}/></div>
     <div className="settings-section"><div><b>Appearance</b><p>Choose the display style that is most comfortable for long purchasing-office sessions.</p></div><div className="theme-toggle-card"><div><b>{theme === "dark" ? "Dark mode enabled" : "Light mode enabled"}</b><span>Switch the entire dashboard theme instantly.</span></div><button className={`switch ${theme === "dark" ? "on" : ""}`} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}><i/></button></div><div className="theme-buttons"><button className={`theme-choice ${theme === "light" ? "selected" : ""}`} onClick={() => setTheme("light")}>☀ <span>Light</span></button><button className={`theme-choice ${theme === "dark" ? "selected" : ""}`} onClick={() => setTheme("dark")}>☾ <span>Dark</span></button></div></div>
     <div className="settings-section"><div><b>Brand color</b><p>Pick the accent used throughout the purchasing workspace.</p></div><div className="accent-palette">{[["emerald","Emerald"],["indigo","Indigo"],["blue","Blue"],["violet","Violet"],["amber","Amber"]].map(([value,label]) => <button key={value} className={`accent-choice ${accent === value ? "selected" : ""} accent-${value}`} onClick={() => setAccent(value)}><i />{label}</button>)}</div></div>
-    <div className="settings-section"><div><b>Account</b><p>Your current Firebase Authentication account.</p></div><div className="storage-callout"><ShieldCheck size={18}/><div><b>Signed in securely</b><span>{user?.email || "Firebase user"}</span></div></div><button className="btn ghost" onClick={() => signOutFirebase()}>Sign out</button></div>
+    <div className="settings-section"><div><b>Account</b><p>Your current Firebase Authentication account.</p></div><div className="storage-callout"><ShieldCheck size={18}/><div><b>Signed in securely</b><span>{user?.email || "Firebase user"}</span></div></div><button className="btn ghost" onClick={() => signOutCurrentUser()}>Sign out</button></div>
     {profile && <div className="settings-section"><div><b>Profile</b><p>Keep your staff or administrator profile current.</p></div><div className="profile-mini"><div className="profile-mini-avatar">{(profile.displayName || profile.email || "U").slice(0,1).toUpperCase()}</div><div><b>{profile.displayName}</b><span>{profile.jobTitle} · {profile.role}</span></div></div><button className="btn secondary" onClick={onOpenProfile}>Open profile</button></div>}
     <div className="settings-section"><div><b>Storage</b><p>{neonEnabled() ? "Preview evaluations are stored in Neon PostgreSQL. The official live system remains on Firebase until approved migration." : "Evaluations are stored in Firebase Firestore. Excel remains available for import, export, and backup."}</p></div><div className="storage-callout"><Database size={18}/><div><b>{neonEnabled() ? "Neon PostgreSQL (Preview)" : "Firebase Firestore"}</b><span>Cloud database · authorized school records</span></div></div></div>
     <div className="settings-section"><div><b>AI scanning</b><p>For Vercel, add <code>OPENAI_API_KEY</code> as a server-side environment variable. The browser never receives the secret key.</p></div><div className="security-note"><ShieldCheck size={18}/><span>Keep API keys only in Vercel/Firebase project configuration.</span></div></div>
@@ -1252,7 +1287,7 @@ function ProfileView({ profile, theme, accent, onAccent, onTheme, onSave }: { pr
   }
   async function sendReset() {
     setResetting(true); setNotice("");
-    try { await resetPassword(profile.email); setNotice("Password reset link sent to your email."); }
+    try { if (neonAuthMode) throw new Error("Use the Neon Auth account recovery page to reset your password."); await resetPassword(profile.email); setNotice("Password reset link sent to your email."); }
     catch (e: any) { setNotice(e?.message || "Could not send the reset link."); }
     finally { setResetting(false); }
   }
@@ -1366,12 +1401,28 @@ function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
   const [error, setError] = useState("");
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError("");
-    try { if (mode === "signin") await signInWithEmail(email, password); else await registerWithEmail(email, password); onSuccess(); }
+    try {
+      if (neonAuthMode) {
+        if (mode !== "signin") throw new Error("New Purchasing accounts are created by an authorized administrator.");
+        const result = await neonAuthClient.signIn.email({email,password});
+        if (result.error) throw new Error(result.error.message || "Neon sign-in failed.");
+        window.dispatchEvent(new Event("supplier-neon-auth-change"));
+      } else if (mode === "signin") await signInWithEmail(email, password);
+      else await registerWithEmail(email, password);
+      onSuccess();
+    }
     catch (err: any) { setError(err?.message?.replace("Firebase: ", "") || "Authentication failed."); }
     finally { setBusy(false); }
   }
-  async function google() { try { setBusy(true); setError(""); await signInWithGoogle(); onSuccess(); } catch (err: any) { const raw = String(err?.code || err?.message || ""); setError(raw.includes("auth/unauthorized-domain") ? "Google sign-in is not authorized for this website domain. The Firebase project administrator must add this domain under Authentication > Settings > Authorized domains. You can also try the official project URL." : err?.message?.replace("Firebase: ", "") || "Google sign-in failed."); } finally { setBusy(false); } }
-  return <div className="auth-shell"><div className="auth-visual"><div className="auth-orbit one"/><div className="auth-orbit two"/><div className="auth-brand"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><b>Purchasing Supplier Evaluation System</b><span>Purchasing workspace</span></div></div><div className="auth-copy"><div className="eyebrow"><span className="eyebrow-dot"/> SECURE PURCHASING WORKSPACE</div><h1>Scan. Evaluate. Decide.</h1><p>Keep supplier evaluations, AI extraction, ratings, reports and Excel backups in one secure cloud workspace.</p><div className="auth-features"><span>{neonEnabled() ? "✓ Neon PostgreSQL database" : "✓ Firestore database (Neon migration pending)"}</span><span>✓ AI document scanning</span><span>✓ Multi-device access</span></div></div></div><div className="auth-card"><div className="auth-card-top"><div className="auth-mini-mark logo-auth-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><div className="eyebrow">{mode === "signin" ? "WELCOME BACK" : "NEW ACCOUNT"}</div><h2>{mode === "signin" ? "Sign in to your workspace" : "Create your account"}</h2><p>{mode === "signin" ? "Access your supplier evaluation database." : "Create a secure Purchasing Office account."}</p></div></div><button className="google-btn" onClick={google} disabled={busy}><span className="google-g">G</span> Continue with Google</button><div className="auth-divider"><span>or continue with email</span></div><form onSubmit={submit}><label className="auth-field"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.edu" required/></label><label className="auth-field"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 6 characters" minLength={6} required/></label>{error && <div className="auth-error"><AlertCircle size={16}/><span>{error}</span></div>}<button className="btn primary auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</button></form><button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}>{mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}</button><small className="auth-note">Your account is handled by Firebase Authentication. Passwords are never stored in the supplier evaluation database.</small></div></div>;
+  async function google() { try { setBusy(true); setError("");
+    if (neonAuthMode) {
+      const result = await neonAuthClient.signIn.social({provider:"google",callbackURL:window.location.origin+"/"});
+      if (result.error) throw new Error(result.error.message || "Neon Google login failed.");
+    } else {
+      await signInWithGoogle();
+    }
+    onSuccess(); } catch (err: any) { const raw = String(err?.code || err?.message || ""); setError(raw.includes("auth/unauthorized-domain") ? "Google sign-in is not authorized for this website domain. The Firebase project administrator must add this domain under Authentication > Settings > Authorized domains. You can also try the official project URL." : err?.message?.replace("Firebase: ", "") || "Google sign-in failed."); } finally { setBusy(false); } }
+  return <div className="auth-shell"><div className="auth-visual"><div className="auth-orbit one"/><div className="auth-orbit two"/><div className="auth-brand"><div className="brand-mark logo-brand-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><b>Purchasing Supplier Evaluation System</b><span>Purchasing workspace</span></div></div><div className="auth-copy"><div className="eyebrow"><span className="eyebrow-dot"/> SECURE PURCHASING WORKSPACE</div><h1>Scan. Evaluate. Decide.</h1><p>Keep supplier evaluations, AI extraction, ratings, reports and Excel backups in one secure cloud workspace.</p><div className="auth-features"><span>{neonEnabled() ? "✓ Neon PostgreSQL database" : "✓ Firestore database (Neon migration pending)"}</span><span>✓ AI document scanning</span><span>✓ Multi-device access</span></div></div></div><div className="auth-card"><div className="auth-card-top"><div className="auth-mini-mark logo-auth-mark"><img src="/sisc-logo.png" alt="Southville International School and Colleges" /></div><div><div className="eyebrow">{mode === "signin" ? "WELCOME BACK" : "NEW ACCOUNT"}</div><h2>{mode === "signin" ? "Sign in to your workspace" : "Create your account"}</h2><p>{mode === "signin" ? "Access your supplier evaluation database." : "Create a secure Purchasing Office account."}</p></div></div><button className="google-btn" onClick={google} disabled={busy}><span className="google-g">G</span> Continue with Google</button><div className="auth-divider"><span>or continue with email</span></div><form onSubmit={submit}><label className="auth-field"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.edu" required/></label><label className="auth-field"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Minimum 6 characters" minLength={6} required/></label>{error && <div className="auth-error"><AlertCircle size={16}/><span>{error}</span></div>}<button className="btn primary auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</button></form>{!neonAuthMode && <button className="auth-switch" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}>{mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}</button>}<small className="auth-note">{neonAuthMode ? "Account sessions are handled by Neon Auth. Approval is required for access to Purchasing records." : "Your account is handled by Firebase Authentication. Passwords are never stored in the supplier evaluation database."}</small></div></div>;
 }
 
 function ScanModal({ busy, error, onClose, onFile }: { busy: boolean; error: string; onClose: () => void; onFile: (file: File) => void }) {

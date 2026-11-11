@@ -34,7 +34,7 @@ export function firebaseConfigured() {
 
 let app: FirebaseApp | undefined;
 
-if (typeof window !== "undefined" && firebaseConfigured()) {
+if (typeof window !== "undefined" && firebaseConfigured() && process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "neon") {
   app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 }
 
