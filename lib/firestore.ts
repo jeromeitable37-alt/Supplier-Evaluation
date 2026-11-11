@@ -11,6 +11,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { auth, db, storage } from "./firebase";
+import { neonAuthClient } from "./auth/neon-client";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { neonEnabled, neonRead, neonWrite, neonWatch, neonPublicGet, neonPublicSubmit } from "./neonClient";
 
@@ -102,6 +103,15 @@ function requireDb() {
 }
 
 export async function signInToFirebase() {
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "neon") {
+    const response = await neonAuthClient.getSession();
+    const user = response.data?.user;
+    if (!user?.id || !user.email) throw new Error("Please sign in to Neon Authentication.");
+    return {
+      uid: user.id, email: user.email, displayName: user.name || "",
+      photoURL: user.image || "", emailVerified: Boolean(user.emailVerified),
+    } as any;
+  }
   if (!auth?.currentUser) throw new Error("Please sign in first.");
   return auth.currentUser;
 }
