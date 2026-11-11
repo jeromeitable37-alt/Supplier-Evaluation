@@ -6,6 +6,8 @@ export const neonEnabled = () => process.env.NEXT_PUBLIC_DATA_BACKEND === "neon"
 
 type ApiResult<T>={ok:true;data:T}|{ok:false;message?:string};
 async function authHeaders():Promise<HeadersInit>{
+  // Neon Auth uses a signed same-origin session cookie after the approved cutover.
+  if(process.env.NEXT_PUBLIC_AUTH_PROVIDER === "neon") return {};
   const user=auth?.currentUser;
   if(!user)throw new Error("Please sign in to your Purchasing account.");
   const token=await user.getIdToken();
